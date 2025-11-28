@@ -1,0 +1,45 @@
+# Stage 2: ML Detection Pipeline
+# Adds pose detection to the capture pipeline
+#
+# This pipeline processes video chunks through MediaPipe for pose
+# detection, classifying gestures and generating annotated thumbnails.
+
+name: webcam-detection
+description: "Real-time pose detection with MediaPipe (Stage 2)"
+
+labels:
+  stage: "2"
+  demo: "webcam"
+  component: "detection"
+
+# Run capture and detection together
+input:
+  subprocess:
+    name: video-capture
+    codec: lines
+    args:
+      - "uv"
+      - "run"
+      - "-s"
+      - "./capture_video.py"
+
+pipeline:
+  processors:
+    - subprocess:
+        name: pose-detection
+        codec: lines
+        args:
+          - "uv"
+          - "run"
+          - "-s"
+          - "./process_chunks.py"
+
+output:
+  stdout:
+    codec: lines
+
+metrics:
+  mapping: |
+    root.detections_total = counter()
+    root.detection_latency_ms = histogram()
+    root.detection_confidence = summary()

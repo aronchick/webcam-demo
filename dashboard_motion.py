@@ -733,6 +733,15 @@ async def dashboard():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", "8080"))
-    print(f"\n  Dashboard running at http://localhost:{port}\n")
+    import socket
+    port = int(os.environ.get("PORT", "8181"))
+    # Get the machine's IP address for display
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        ip = socket.gethostname()
+    print(f"\n  Dashboard running at http://{ip}:{port}\n")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

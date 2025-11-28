@@ -1,0 +1,77 @@
+# Stage 4: Alerts & Triggers Pipeline
+# Adds real-time alerts and visual triggers
+#
+# This pipeline extends counting with instant alerts when
+# specific gestures are detected, triggering visual effects
+# and optional webhooks.
+
+name: webcam-alerts
+description: "Real-time alerts and triggers (Stage 4)"
+
+labels:
+  stage: "4"
+  demo: "webcam"
+  component: "alerts"
+
+input:
+  subprocess:
+    name: video-capture
+    codec: lines
+    args:
+      - "uv"
+      - "run"
+      - "-s"
+      - "./capture_video.py"
+
+pipeline:
+  processors:
+    - subprocess:
+        name: pose-detection
+        codec: lines
+        args:
+          - "uv"
+          - "run"
+          - "-s"
+          - "./process_chunks.py"
+
+    # Alert processor - triggers on specific gestures
+    - mapping: |
+        meta detection_category = this.category
+        root = this
+        root.alert = match meta("detection_category") {
+          "left_hand_raised" => {"type": "LEFT", "color": "#10b981", "sound": "left.wav"}
+          "right_hand_raised" => {"type": "RIGHT", "color": "#3b82f6", "sound": "right.wav"}
+          "both_hands_raised" => {"type": "CELEBRATION", "color": "#8b5cf6", "sound": "celebration.wav"}
+          _ => null
+        }
+
+    # Filter to only alert-worthy events
+    - mapping: |
+        root = if this.alert != null { this } else { deleted() }
+
+    # Send alert to dashboard via HTTP
+    # Note: Replace ${DASHBOARD_HOST} with your Pi's IP or hostname
+    - http:
+        url: "http://${DASHBOARD_HOST:-$(hostname -I | awk '{print $1}')}:8181/api/alert"
+        verb: POST
+        headers:
+          Content-Type: application/json
+
+output:
+  stdout:
+    codec: lines
+
+# Optionally send alerts to external webhook
+# output:
+#   broker:
+#     outputs:
+#       - stdout: {}
+#       - http_client:
+#           url: "${ALERT_WEBHOOK_URL}"
+#           verb: POST
+
+metrics:
+  mapping: |
+    root.alerts_triggered_total = counter()
+    root.alert_type = counter()
+    root.alert_latency_ms = histogram()

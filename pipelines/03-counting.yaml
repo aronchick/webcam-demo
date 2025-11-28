@@ -1,0 +1,57 @@
+# Stage 3: Counting & Statistics Pipeline
+# Adds gesture counting and session statistics
+#
+# This pipeline extends detection with persistent counting,
+# tracking left vs right gestures and computing statistics.
+
+name: webcam-counting
+description: "Gesture counting and statistics (Stage 3)"
+
+labels:
+  stage: "3"
+  demo: "webcam"
+  component: "counting"
+
+input:
+  subprocess:
+    name: video-capture
+    codec: lines
+    args:
+      - "uv"
+      - "run"
+      - "-s"
+      - "./capture_video.py"
+
+pipeline:
+  processors:
+    - subprocess:
+        name: pose-detection
+        codec: lines
+        args:
+          - "uv"
+          - "run"
+          - "-s"
+          - "./process_chunks.py"
+
+    # Counting processor - aggregates detection results
+    - mapping: |
+        meta detection_category = this.category
+        root = this
+
+    - branch:
+        processors:
+          - mapping: |
+              root.left_count = if meta("detection_category") == "left_hand_raised" { 1 } else { 0 }
+              root.right_count = if meta("detection_category") == "right_hand_raised" { 1 } else { 0 }
+              root.both_count = if meta("detection_category") == "both_hands_raised" { 1 } else { 0 }
+
+output:
+  stdout:
+    codec: lines
+
+metrics:
+  mapping: |
+    root.left_hand_total = counter()
+    root.right_hand_total = counter()
+    root.both_hands_total = counter()
+    root.gesture_rate_per_minute = gauge()

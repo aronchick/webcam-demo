@@ -10,12 +10,24 @@ Pipeline orchestrator - starts capture, processor, and dashboard together.
 import atexit
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
+
+def get_ip():
+    """Get the machine's IP address."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return socket.gethostname()
 
 # ANSI colors
 C = {
@@ -86,10 +98,11 @@ def main():
         processes[name] = proc
         time.sleep(1)  # Stagger startup
 
+    ip = get_ip()
     print(f"""
 {C['bold']}All processes started!{C['reset']}
 
-  {C['dashboard']}Dashboard:{C['reset']} http://localhost:8080
+  {C['dashboard']}Dashboard:{C['reset']} http://{ip}:8181
 
   Press {C['bold']}Ctrl+C{C['reset']} to stop all processes.
 """)

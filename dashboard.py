@@ -10,6 +10,7 @@
 """
 Real-time dashboard for the webcam chunking pipeline.
 Polished UI with WebSocket updates, video playback, and annotated thumbnails.
+Includes a Pipelines tab with YAML configs for easy copy/paste.
 """
 
 import asyncio
@@ -18,12 +19,13 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 
 app = FastAPI(title="Webcam Pipeline Dashboard")
 
 CHUNKS_DIR = Path(os.environ.get("CHUNKS_DIR", "./chunks"))
 PROCESSED_DIR = Path(os.environ.get("PROCESSED_DIR", "./processed"))
+SCRIPT_DIR = Path(__file__).parent
 
 CATEGORIES = {
     "left_hand_raised": {"emoji": "👈", "color": "#10b981", "label": "Left Hand", "icon": "hand-left"},
@@ -128,6 +130,30 @@ async def serve_thumb(filename: str):
     return {"error": "not found"}
 
 
+@app.get("/api/pipelines")
+async def get_pipelines():
+    """Return all pipeline YAML configs."""
+    pipelines_dir = SCRIPT_DIR / "pipelines"
+    pipelines = []
+    if pipelines_dir.exists():
+        for yaml_file in sorted(pipelines_dir.glob("*.yaml")):
+            pipelines.append({
+                "name": yaml_file.stem,
+                "filename": yaml_file.name,
+                "content": yaml_file.read_text(),
+            })
+    return pipelines
+
+
+@app.get("/api/pipeline/{filename}")
+async def get_pipeline(filename: str):
+    """Return a specific pipeline YAML."""
+    yaml_path = SCRIPT_DIR / "pipelines" / filename
+    if yaml_path.exists() and yaml_path.suffix == ".yaml":
+        return PlainTextResponse(yaml_path.read_text(), media_type="text/yaml")
+    return {"error": "not found"}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket for real-time updates."""
@@ -168,6 +194,7 @@ async def dashboard():
             --accent-blue: #3b82f6;
             --accent-purple: #8b5cf6;
             --accent-amber: #f59e0b;
+            --accent-cyan: #06b6d4;
             --border: rgba(255,255,255,0.1);
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -185,7 +212,7 @@ async def dashboard():
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 0 25px;
+            padding: 10px 0 20px;
         }
         .logo { display: flex; align-items: center; gap: 12px; }
         .logo-icon {
@@ -202,6 +229,7 @@ async def dashboard():
             -webkit-text-fill-color: transparent;
         }
         .logo-text p { font-size: 0.75em; color: var(--text-muted); }
+        .header-right { display: flex; align-items: center; gap: 12px; }
         .status-badge {
             display: flex; align-items: center; gap: 8px;
             padding: 8px 16px;
@@ -220,6 +248,44 @@ async def dashboard():
         @keyframes pulse {
             0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
             50% { opacity: 0.8; box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+        }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-secondary);
+            padding: 4px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tab-btn:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }
+        .tab-btn.active {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
         }
 
         /* Main Grid */
@@ -379,13 +445,17 @@ async def dashboard():
         /* Sidebar */
         .sidebar { display: flex; flex-direction: column; gap: 16px; }
 
-        /* Pending card */
+        /* Pending card - fixed height */
         .pending-card {
             background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05));
             border: 1px solid rgba(245,158,11,0.3);
             border-radius: 16px;
             padding: 20px;
             text-align: center;
+            height: 140px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }
         .pending-label { font-size: 0.75em; color: var(--accent-amber); text-transform: uppercase; letter-spacing: 0.1em; }
         .pending-count {
@@ -394,10 +464,19 @@ async def dashboard():
             color: var(--accent-amber);
             text-shadow: 0 0 30px rgba(245,158,11,0.3);
             font-family: monospace;
+            line-height: 1.2;
         }
-        .pending-files { font-size: 0.7em; color: var(--text-muted); margin-top: 8px; }
+        .pending-files {
+            font-size: 0.7em;
+            color: var(--text-muted);
+            margin-top: 8px;
+            height: 1.5em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
 
-        /* Category grid */
+        /* Category grid - fixed card sizes */
         .category-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -407,9 +486,14 @@ async def dashboard():
             background: var(--bg-secondary);
             border: 2px solid var(--border);
             border-radius: 16px;
-            padding: 20px;
+            padding: 16px;
             text-align: center;
             transition: all 0.3s;
+            height: 130px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
         }
         .cat-card.active {
             background: var(--bg-tertiary);
@@ -417,17 +501,17 @@ async def dashboard():
             box-shadow: 0 8px 24px rgba(0,0,0,0.3);
         }
         .cat-icon {
-            width: 56px; height: 56px;
-            margin: 0 auto 12px;
+            width: 44px; height: 44px;
             border-radius: 50%;
             background: rgba(255,255,255,0.05);
             display: flex; align-items: center; justify-content: center;
-            font-size: 1.8em;
+            font-size: 1.4em;
             transition: transform 0.3s;
+            flex-shrink: 0;
         }
         .cat-card.active .cat-icon { transform: scale(1.1); }
-        .cat-count { font-size: 2em; font-weight: bold; font-family: monospace; }
-        .cat-label { font-size: 0.75em; color: var(--text-muted); text-transform: uppercase; margin-top: 4px; }
+        .cat-count { font-size: 1.8em; font-weight: bold; font-family: monospace; margin: 4px 0; }
+        .cat-label { font-size: 0.7em; color: var(--text-muted); text-transform: uppercase; }
 
         /* Event log */
         .event-log {
@@ -495,9 +579,217 @@ async def dashboard():
             color: var(--text-muted);
             font-size: 0.8em;
         }
+        .footer a { color: var(--accent-blue); text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+
+        /* Pipelines Page Styles */
+        .pipelines-intro {
+            background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1));
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 20px;
+        }
+        .pipelines-intro h2 {
+            font-size: 1.2em;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .pipelines-intro p {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        .pipelines-intro a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+        .pipelines-intro a:hover { text-decoration: underline; }
+
+        /* Pipeline tabs */
+        .pipeline-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .pipeline-tab {
+            padding: 12px 20px;
+            border: 2px solid var(--border);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 12px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .pipeline-tab:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .pipeline-tab.active {
+            border-color: var(--accent-blue);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        .pipeline-tab .stage-num {
+            width: 28px; height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 0.85em;
+            color: white;
+        }
+        .pipeline-tab .stage-num.s1 { background: var(--accent-blue); }
+        .pipeline-tab .stage-num.s2 { background: var(--accent-green); }
+        .pipeline-tab .stage-num.s3 { background: var(--accent-amber); }
+        .pipeline-tab .stage-num.s4 { background: var(--accent-purple); }
+
+        .pipeline-content {
+            display: none;
+        }
+        .pipeline-content.active {
+            display: block;
+        }
+
+        .pipeline-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+
+        .pipeline-header {
+            padding: 16px 20px;
+            background: var(--bg-tertiary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+        }
+        .pipeline-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .pipeline-stage {
+            width: 36px; height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1em;
+            color: white;
+        }
+        .pipeline-stage.s1 { background: var(--accent-blue); }
+        .pipeline-stage.s2 { background: var(--accent-green); }
+        .pipeline-stage.s3 { background: var(--accent-amber); }
+        .pipeline-stage.s4 { background: var(--accent-purple); }
+        .pipeline-name {
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+        .pipeline-desc {
+            font-size: 0.85em;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .pipeline-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+        .btn-copy {
+            background: var(--accent-blue);
+            color: white;
+        }
+        .btn-copy:hover { background: #2563eb; }
+        .btn-copy.copied {
+            background: var(--accent-green);
+        }
+        .btn-download {
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+        .btn-download:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .pipeline-code {
+            position: relative;
+            max-height: 500px;
+            overflow: auto;
+        }
+        .pipeline-code pre {
+            margin: 0;
+            padding: 20px 24px;
+            font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
+            font-size: 0.85em;
+            line-height: 1.7;
+            overflow-x: auto;
+            background: var(--bg-primary);
+        }
+        .pipeline-code code {
+            display: block;
+            color: var(--text-primary);
+        }
+
+        /* YAML Syntax Highlighting */
+        .yaml-comment { color: #6b7280; font-style: italic; }
+        .yaml-key { color: #60a5fa; }
+        .yaml-string { color: #34d399; }
+        .yaml-number { color: #fbbf24; }
+        .yaml-bool { color: #f472b6; }
+        .yaml-null { color: #9ca3af; }
+
+        /* Copy notification */
+        .copy-toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--accent-green);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+        .copy-toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
+    <div class="copy-toast" id="copy-toast">Copied to clipboard!</div>
+
     <div class="container">
         <header class="header">
             <div class="logo">
@@ -507,12 +799,26 @@ async def dashboard():
                     <p>Real-time pose classification</p>
                 </div>
             </div>
-            <div class="status-badge">
-                <span class="status-dot" id="status-dot"></span>
-                <span id="status-text">Connecting...</span>
+            <div class="header-right">
+                <div class="status-badge">
+                    <span class="status-dot" id="status-dot"></span>
+                    <span id="status-text">Connecting...</span>
+                </div>
             </div>
         </header>
 
+        <!-- Tab Navigation -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" onclick="switchTab('dashboard')">
+                <span>📊</span> Dashboard
+            </button>
+            <button class="tab-btn" onclick="switchTab('pipelines')">
+                <span>🔧</span> Pipelines
+            </button>
+        </nav>
+
+        <!-- Dashboard Tab -->
+        <div id="tab-dashboard" class="tab-content active">
         <main class="main-grid">
             <div class="video-section">
                 <div class="video-header">
@@ -581,9 +887,34 @@ async def dashboard():
                 </div>
             </div>
         </main>
+        </div><!-- end tab-dashboard -->
+
+        <!-- Pipelines Tab -->
+        <div id="tab-pipelines" class="tab-content">
+            <div class="pipelines-intro">
+                <h2>🚀 Expanso Pipeline Configs</h2>
+                <p>
+                    Deploy these pipelines progressively via <a href="https://cloud.expanso.io" target="_blank">Expanso Cloud</a>.
+                    Copy the YAML and paste into the pipeline editor.
+                </p>
+            </div>
+
+            <div class="pipeline-tabs" id="pipeline-tabs">
+                <!-- Tabs rendered by JS -->
+            </div>
+
+            <div id="pipeline-panels">
+                <div style="color: var(--text-muted); text-align: center; padding: 40px;">
+                    Loading pipelines...
+                </div>
+            </div>
+        </div><!-- end tab-pipelines -->
 
         <footer class="footer">
-            Powered by MediaPipe · FFmpeg · FastAPI · Expanso
+            Powered by <a href="https://ai.google.dev/edge/mediapipe" target="_blank">MediaPipe</a> ·
+            <a href="https://ffmpeg.org" target="_blank">FFmpeg</a> ·
+            <a href="https://fastapi.tiangolo.com" target="_blank">FastAPI</a> ·
+            <a href="https://expanso.io" target="_blank">Expanso</a>
         </footer>
     </div>
 
@@ -592,6 +923,7 @@ async def dashboard():
         let currentVideo = null;
         let reconnectAttempts = 0;
         let videoEnded = false;
+        let pipelinesLoaded = false;
 
         const categories = {
             left_hand_raised: { emoji: '👈', color: '#10b981', label: 'Left Hand' },
@@ -599,6 +931,179 @@ async def dashboard():
             both_hands_raised: { emoji: '🙌', color: '#8b5cf6', label: 'Both Hands' },
             no_detection: { emoji: '👤', color: '#64748b', label: 'No Detection' },
         };
+
+        const pipelineInfo = {
+            '01-capture': { stage: 1, name: 'Video Capture', desc: 'Webcam capture in 3-second chunks' },
+            '02-detection': { stage: 2, name: 'ML Detection', desc: 'Real-time pose detection with MediaPipe' },
+            '03-counting': { stage: 3, name: 'Counting & Stats', desc: 'Gesture counting and statistics' },
+            '04-alerts': { stage: 4, name: 'Alerts & Triggers', desc: 'Real-time alerts and visual effects' },
+        };
+
+        // Tab switching
+        function switchTab(tabName) {
+            // Update buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.closest('.tab-btn').classList.add('active');
+
+            // Update content
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.getElementById('tab-' + tabName).classList.add('active');
+
+            // Load pipelines on first visit
+            if (tabName === 'pipelines' && !pipelinesLoaded) {
+                loadPipelines();
+            }
+        }
+
+        // YAML syntax highlighting
+        function highlightYaml(yaml) {
+            return yaml
+                .split('\\n')
+                .map(line => {
+                    // Comments
+                    if (line.trim().startsWith('#')) {
+                        return `<span class="yaml-comment">${escapeHtml(line)}</span>`;
+                    }
+                    // Key-value pairs
+                    const match = line.match(/^(\\s*)([\\w-]+)(:\\s*)(.*)$/);
+                    if (match) {
+                        const [, indent, key, colon, value] = match;
+                        let highlightedValue = escapeHtml(value);
+
+                        // Highlight different value types
+                        if (value.startsWith('"') || value.startsWith("'")) {
+                            highlightedValue = `<span class="yaml-string">${escapeHtml(value)}</span>`;
+                        } else if (/^\\d+(\\.\\d+)?$/.test(value)) {
+                            highlightedValue = `<span class="yaml-number">${escapeHtml(value)}</span>`;
+                        } else if (value === 'true' || value === 'false') {
+                            highlightedValue = `<span class="yaml-bool">${escapeHtml(value)}</span>`;
+                        } else if (value === 'null' || value === '~') {
+                            highlightedValue = `<span class="yaml-null">${escapeHtml(value)}</span>`;
+                        }
+
+                        return `${escapeHtml(indent)}<span class="yaml-key">${escapeHtml(key)}</span>${escapeHtml(colon)}${highlightedValue}`;
+                    }
+                    return escapeHtml(line);
+                })
+                .join('\\n');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Load and render pipelines as tabs
+        let currentPipelineTab = 0;
+
+        async function loadPipelines() {
+            try {
+                const response = await fetch('/api/pipelines');
+                const pipelines = await response.json();
+
+                if (pipelines.length === 0) {
+                    document.getElementById('pipeline-panels').innerHTML = `
+                        <div style="color: var(--text-muted); text-align: center; padding: 40px;">
+                            No pipeline configs found in ./pipelines/
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Render tabs
+                let tabsHtml = '';
+                pipelines.forEach((pipeline, idx) => {
+                    const info = pipelineInfo[pipeline.name] || { stage: '?', name: pipeline.name, desc: '' };
+                    tabsHtml += `
+                        <button class="pipeline-tab ${idx === 0 ? 'active' : ''}" onclick="switchPipelineTab(${idx})">
+                            <span class="stage-num s${info.stage}">${info.stage}</span>
+                            <span>${info.name}</span>
+                        </button>
+                    `;
+                });
+                document.getElementById('pipeline-tabs').innerHTML = tabsHtml;
+
+                // Render panels
+                let panelsHtml = '';
+                pipelines.forEach((pipeline, idx) => {
+                    const info = pipelineInfo[pipeline.name] || { stage: '?', name: pipeline.name, desc: '' };
+                    panelsHtml += `
+                        <div class="pipeline-content ${idx === 0 ? 'active' : ''}" id="pipeline-panel-${idx}">
+                            <div class="pipeline-card">
+                                <div class="pipeline-header">
+                                    <div class="pipeline-title">
+                                        <div class="pipeline-stage s${info.stage}">${info.stage}</div>
+                                        <div>
+                                            <div class="pipeline-name">${info.name}</div>
+                                            <div class="pipeline-desc">${info.desc}</div>
+                                        </div>
+                                    </div>
+                                    <div class="pipeline-actions">
+                                        <button class="btn btn-copy" onclick="copyPipeline(this, '${pipeline.name}')">
+                                            <span>📋</span> Copy YAML
+                                        </button>
+                                        <a href="/api/pipeline/${pipeline.filename}" download class="btn btn-download">
+                                            <span>⬇</span> Download
+                                        </a>
+                                    </div>
+                                </div>
+                                <div class="pipeline-code">
+                                    <pre><code>${highlightYaml(pipeline.content)}</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                document.getElementById('pipeline-panels').innerHTML = panelsHtml;
+
+                pipelinesLoaded = true;
+            } catch (err) {
+                document.getElementById('pipeline-panels').innerHTML = `
+                    <div style="color: var(--text-muted); text-align: center; padding: 40px;">
+                        Error loading pipelines: ${err.message}
+                    </div>
+                `;
+            }
+        }
+
+        function switchPipelineTab(idx) {
+            // Update tab buttons
+            document.querySelectorAll('.pipeline-tab').forEach((tab, i) => {
+                tab.classList.toggle('active', i === idx);
+            });
+            // Update panels
+            document.querySelectorAll('.pipeline-content').forEach((panel, i) => {
+                panel.classList.toggle('active', i === idx);
+            });
+            currentPipelineTab = idx;
+        }
+
+        // Copy pipeline to clipboard
+        async function copyPipeline(btn, name) {
+            try {
+                const response = await fetch(`/api/pipeline/${name}.yaml`);
+                const yaml = await response.text();
+                await navigator.clipboard.writeText(yaml);
+
+                // Show copied state
+                btn.classList.add('copied');
+                btn.innerHTML = '<span>✓</span> Copied!';
+
+                // Show toast
+                const toast = document.getElementById('copy-toast');
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 2000);
+
+                // Reset button after delay
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    btn.innerHTML = '<span>📋</span> Copy';
+                }, 2000);
+            } catch (err) {
+                alert('Failed to copy: ' + err.message);
+            }
+        }
 
         // Video end handler - show interstitial instead of looping
         document.addEventListener('DOMContentLoaded', () => {
@@ -733,6 +1238,15 @@ async def dashboard():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", "8080"))
-    print(f"\n  Dashboard running at http://localhost:{port}\n")
+    import socket
+    port = int(os.environ.get("PORT", "8181"))
+    # Get the machine's IP address for display
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        ip = socket.gethostname()
+    print(f"\n  Dashboard running at http://{ip}:{port}\n")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

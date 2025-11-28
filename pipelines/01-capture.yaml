@@ -1,0 +1,33 @@
+# Stage 1: Video Capture Pipeline
+# Deploys webcam capture - video shows but no detection
+#
+# This pipeline runs FFmpeg to capture video chunks from the webcam
+# and writes them to the chunks/ directory for processing.
+
+name: webcam-capture
+description: "Capture webcam video in 3-second chunks (Stage 1)"
+
+labels:
+  stage: "1"
+  demo: "webcam"
+  component: "capture"
+
+input:
+  subprocess:
+    name: ffmpeg-capture
+    codec: lines
+    args:
+      - "uv"
+      - "run"
+      - "-s"
+      - "./capture_video.py"
+
+output:
+  stdout:
+    codec: lines
+
+# Custom metrics for this stage
+metrics:
+  mapping: |
+    root.chunks_created = counter()
+    root.capture_active = gauge()
