@@ -21,6 +21,7 @@ Environment Variables:
     POLL_INTERVAL: Seconds between directory scans (default: 1)
     SAMPLE_RATE: Frames to sample per second of video (default: 1)
     CONFIDENCE_THRESHOLD: Min pose detection confidence (default: 0.5)
+    DB_PATH: Path to SQLite database (default: "./pipeline.db")
 """
 
 import os
@@ -37,6 +38,9 @@ from pathlib import Path
 
 import cv2
 import mediapipe as mp
+
+# Import our database module
+import db
 
 
 # MediaPipe pose landmark indices
@@ -230,6 +234,12 @@ def main() -> int:
     poll_interval = float(os.environ.get("POLL_INTERVAL", "1"))
     sample_rate = int(os.environ.get("SAMPLE_RATE", "1"))
     confidence = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.5"))
+    db_path = Path(os.environ.get("DB_PATH", "./pipeline.db"))
+
+    # Initialize database
+    db.init_db(db_path)
+    db.start_session(db_path)
+    db.set_pipeline_stage(2, db_path)  # Stage 2 = detection active
 
     # Create output directories
     folders = [
@@ -300,11 +310,22 @@ Watching for new chunks... (Ctrl+C to stop)
 
                 print(f"Processing: {video_path.name}")
 
-                # Classify the video and generate thumbnail
+                # Classify the video and generate thumbnail (with timing)
+                start_time = time.time()
                 classification, thumb_path = classifier.classify_video(
                     video_path, sample_rate, thumbs_dir=thumbs_dir
                 )
+                processing_time_ms = (time.time() - start_time) * 1000
                 folder = get_output_folder(classification)
+
+                # Record detection in database
+                db.record_detection(
+                    category=folder,
+                    filename=video_path.name,
+                    confidence=confidence,
+                    processing_time_ms=processing_time_ms,
+                    db_path=db_path,
+                )
 
                 # Move to appropriate folder (check file still exists)
                 if not video_path.exists():
@@ -316,7 +337,7 @@ Watching for new chunks... (Ctrl+C to stop)
                 try:
                     shutil.move(str(video_path), str(dest))
                     thumb_info = f" [thumb: {thumb_path.name}]" if thumb_path else ""
-                    print(f"  -> {folder}/ ({classification}){thumb_info}")
+                    print(f"  -> {folder}/ ({classification}) [{processing_time_ms:.0f}ms]{thumb_info}")
                 except Exception as e:
                     print(f"  Error moving file: {e}")
                 finally:

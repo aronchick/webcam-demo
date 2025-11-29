@@ -1,2 +1,36 @@
-chunks
-processed
+# Video data directories
+chunks/
+processed/
+
+# Database files
+pipeline.db
+pipeline.db-shm
+pipeline.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files
+.env
+.envrc
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Expanso Webcam Pipeline Demo - Documentation</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-purple: #8b5cf6;
+            --accent-amber: #f59e0b;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+
+        /* Header */
+        .hero {
+            text-align: center;
+            padding: 60px 20px;
+            background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1));
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .hero h1 {
+            font-size: 2.5em;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 16px;
+        }
+        .hero p { color: var(--text-muted); font-size: 1.2em; max-width: 600px; margin: 0 auto; }
+
+        /* Navigation */
+        .nav {
+            position: sticky;
+            top: 0;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding: 16px 20px;
+            z-index: 100;
+        }
+        .nav-inner {
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+        .nav a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav a:hover { color: var(--accent-blue); }
+
+        /* Sections */
+        section { padding: 60px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        h2 {
+            font-size: 1.8em;
+            margin-bottom: 24px;
+            color: var(--accent-blue);
+        }
+        h3 {
+            font-size: 1.3em;
+            margin: 32px 0 16px;
+            color: var(--text);
+        }
+        p { margin-bottom: 16px; color: var(--text-muted); }
+
+        /* Code blocks */
+        pre {
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            padding: 20px;
+            overflow-x: auto;
+            margin: 16px 0;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        code {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.9em;
+        }
+        p code {
+            background: var(--bg-tertiary);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        /* Step cards */
+        .step {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            padding: 24px;
+            margin: 24px 0;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .step-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .step-number {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: white;
+        }
+        .step-number.stage0 { background: var(--text-muted); }
+        .step-number.stage1 { background: var(--accent-blue); }
+        .step-number.stage2 { background: var(--accent-green); }
+        .step-number.stage3 { background: var(--accent-amber); }
+        .step-number.stage4 { background: var(--accent-purple); }
+        .step-title { font-size: 1.3em; font-weight: 600; }
+        .step-content { color: var(--text-muted); }
+
+        /* Visual indicator boxes */
+        .visual-box {
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+            border-left: 4px solid var(--accent-green);
+        }
+        .visual-box h4 {
+            color: var(--accent-green);
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .visual-box p { margin: 0; color: var(--text); }
+
+        /* Say this boxes */
+        .say-box {
+            background: rgba(59,130,246,0.1);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 16px 0;
+            border-left: 4px solid var(--accent-blue);
+            font-style: italic;
+        }
+        .say-box::before {
+            content: '💬 Say: ';
+            font-style: normal;
+            font-weight: 600;
+            color: var(--accent-blue);
+        }
+
+        /* Action boxes */
+        .action-box {
+            background: rgba(245,158,11,0.1);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 16px 0;
+            border-left: 4px solid var(--accent-amber);
+        }
+        .action-box::before {
+            content: '⚡ Action: ';
+            font-weight: 600;
+            color: var(--accent-amber);
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        th {
+            background: var(--bg-tertiary);
+            font-weight: 600;
+            color: var(--text);
+        }
+        td { color: var(--text-muted); }
+
+        /* Checklist */
+        .checklist {
+            list-style: none;
+            padding: 0;
+        }
+        .checklist li {
+            padding: 8px 0 8px 32px;
+            position: relative;
+            color: var(--text-muted);
+        }
+        .checklist li::before {
+            content: '☐';
+            position: absolute;
+            left: 0;
+            color: var(--accent-blue);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+        }
+        footer a { color: var(--accent-blue); text-decoration: none; }
+        footer a:hover { text-decoration: underline; }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .hero h1 { font-size: 1.8em; }
+            .step-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <h1>Expanso Webcam Pipeline Demo</h1>
+        <p>Step-by-step guide for running a progressive edge computing demo with real-time ML detection.</p>
+    </div>
+
+    <nav class="nav">
+        <div class="nav-inner">
+            <a href="#quick-start">Quick Start</a>
+            <a href="#pre-demo">Pre-Demo Setup</a>
+            <a href="#demo-script">Demo Script</a>
+            <a href="#stages">Stage Details</a>
+            <a href="#troubleshooting">Troubleshooting</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <section id="quick-start">
+            <h2>Quick Start</h2>
+            <pre><code># Clone the repo
+git clone https://github.com/aronchick/webcam-demo.git
+cd webcam-demo
+
+# Start the demo
+./demo.sh
+
+# Open the displayed URL in a browser</code></pre>
+            <p>That's it! The demo script handles everything automatically.</p>
+        </section>
+
+        <section id="pre-demo">
+            <h2>Pre-Demo Setup Checklist</h2>
+            <p>Complete these steps 5-10 minutes before your demo:</p>
+
+            <h3>1. Start the Demo</h3>
+            <pre><code>cd webcam-demo
+./demo.sh</code></pre>
+
+            <h3>2. Verify Everything Works</h3>
+            <ul class="checklist">
+                <li>Dashboard loads at the displayed URL</li>
+                <li>Shows "Deploy a pipeline to begin" message</li>
+                <li>Webcam LED is on (if applicable)</li>
+                <li>Network is stable</li>
+            </ul>
+
+            <h3>3. Prepare Browser Windows</h3>
+            <ul class="checklist">
+                <li>Dashboard open in one window/tab</li>
+                <li>Expanso Cloud open in another (cloud.expanso.io)</li>
+                <li>Both visible to audience (or ready to switch)</li>
+            </ul>
+
+            <h3>4. Test the Stages</h3>
+            <pre><code># Quick test - run each command and verify dashboard updates:
+curl -X POST http://localhost:8181/api/stage/1
+curl -X POST http://localhost:8181/api/stage/2
+curl -X POST http://localhost:8181/api/stage/3
+curl -X POST http://localhost:8181/api/stage/4
+curl -X POST http://localhost:8181/api/stage/0  # Reset</code></pre>
+        </section>
+
+        <section id="demo-script">
+            <h2>Demo Script</h2>
+            <p>Follow these steps during your live demo. Each step includes what to say and what the audience will see.</p>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number stage0">0</div>
+                    <div class="step-title">Introduction - Empty State</div>
+                </div>
+                <div class="step-content">
+                    <div class="say-box">
+                        "This is our edge device - a Raspberry Pi running the Expanso agent. The dashboard is ready and waiting, but no pipelines have been deployed yet. Let's change that."
+                    </div>
+                    <div class="visual-box">
+                        <h4>Audience Sees</h4>
+                        <p>Empty video area with message: "Deploy a pipeline to begin"</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number stage1">1</div>
+                    <div class="step-title">Deploy Video Capture</div>
+                </div>
+                <div class="step-content">
+                    <div class="say-box">
+                        "Let's deploy our first pipeline - video capture. This will stream video from the webcam in 3-second chunks."
+                    </div>
+                    <div class="action-box">
+                        Deploy the <strong>01-capture</strong> pipeline in Expanso Cloud<br>
+                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/1</code></em>
+                    </div>
+                    <div class="visual-box">
+                        <h4>Audience Sees</h4>
+                        <p>Video feed appears immediately. Category counters all show 0. Header shows "Stage: 1".</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number stage2">2</div>
+                    <div class="step-title">Deploy ML Detection</div>
+                </div>
+                <div class="step-content">
+                    <div class="say-box">
+                        "Now let's add intelligence. This pipeline adds ML-powered pose detection using MediaPipe. It can recognize when someone raises their left hand, right hand, or both."
+                    </div>
+                    <div class="action-box">
+                        Deploy the <strong>02-detection</strong> pipeline in Expanso Cloud<br>
+                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/2</code></em>
+                    </div>
+                    <div class="visual-box">
+                        <h4>Audience Sees</h4>
+                        <p><strong>When you raise your LEFT hand:</strong> Giant GREEN arrow flashes across the video + screen pulses green + counter increments</p>
+                        <p><strong>When you raise your RIGHT hand:</strong> Giant BLUE arrow flashes + screen pulses blue</p>
+                        <p><strong>When you raise BOTH hands:</strong> Giant PURPLE icon flashes + screen pulses purple</p>
+                    </div>
+                    <p><strong>Demo tip:</strong> Stand back from the camera and raise hands dramatically. The indicators are designed to be visible from 20+ feet away!</p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number stage3">3</div>
+                    <div class="step-title">Deploy Counting Pipeline</div>
+                </div>
+                <div class="step-content">
+                    <div class="say-box">
+                        "Let's make this more fun. This pipeline adds a scoreboard to track left vs right gestures. We can use this for competitions or engagement tracking."
+                    </div>
+                    <div class="action-box">
+                        Deploy the <strong>03-counting</strong> pipeline in Expanso Cloud<br>
+                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/3</code></em>
+                    </div>
+                    <div class="visual-box">
+                        <h4>Audience Sees</h4>
+                        <p>Stadium-style scoreboard appears: <strong>LEFT: 5 VS RIGHT: 3</strong></p>
+                        <p>Scores update in real-time as gestures are detected.</p>
+                    </div>
+                    <p><strong>Demo tip:</strong> Challenge an audience member to a "gesture battle" - who can score more points?</p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number stage4">4</div>
+                    <div class="step-title">Deploy Alerts Pipeline</div>
+                </div>
+                <div class="step-content">
+                    <div class="say-box">
+                        "Finally, let's add some celebration! This pipeline triggers special effects when both hands are raised - perfect for engagement moments."
+                    </div>
+                    <div class="action-box">
+                        Deploy the <strong>04-alerts</strong> pipeline in Expanso Cloud<br>
+                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/4</code></em>
+                    </div>
+                    <div class="visual-box">
+                        <h4>Audience Sees</h4>
+                        <p>When BOTH hands are raised: <strong>Confetti explosion animation</strong> fills the screen!</p>
+                    </div>
+                    <p><strong>Demo tip:</strong> Build up to this moment. "Let's all raise both hands together... 3... 2... 1..." then confetti!</p>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-number stage0">End</div>
+                    <div class="step-title">Wrap Up</div>
+                </div>
+                <div class="step-content">
+                    <div class="say-box">
+                        "That's the power of Expanso - progressive deployment of intelligent pipelines at the edge. Each pipeline added new capabilities without any downtime or reconfiguration."
+                    </div>
+                    <div class="action-box">
+                        Press <strong>Ctrl+C</strong> in the terminal to end the demo. All data is automatically cleared.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="stages">
+            <h2>Stage Reference</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Stage</th>
+                        <th>Pipeline</th>
+                        <th>What It Does</th>
+                        <th>Visual Effect</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>0</td>
+                        <td>None</td>
+                        <td>Waiting state</td>
+                        <td>Empty state message</td>
+                    </tr>
+                    <tr>
+                        <td>1</td>
+                        <td>Capture</td>
+                        <td>Webcam → 3s video chunks</td>
+                        <td>Video feed appears</td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>Detection</td>
+                        <td>MediaPipe pose detection</td>
+                        <td>Giant icons + color flash + glow border</td>
+                    </tr>
+                    <tr>
+                        <td>3</td>
+                        <td>Counting</td>
+                        <td>Gesture statistics</td>
+                        <td>Stadium scoreboard</td>
+                    </tr>
+                    <tr>
+                        <td>4</td>
+                        <td>Alerts</td>
+                        <td>Event triggers</td>
+                        <td>Confetti on both-hands</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Manual Stage Control (for testing)</h3>
+            <pre><code># Set stage via API
+curl -X POST http://localhost:8181/api/stage/1  # Stage 1
+curl -X POST http://localhost:8181/api/stage/2  # Stage 2
+curl -X POST http://localhost:8181/api/stage/3  # Stage 3
+curl -X POST http://localhost:8181/api/stage/4  # Stage 4
+curl -X POST http://localhost:8181/api/stage/0  # Reset
+
+# Check current stage
+curl http://localhost:8181/api/stage</code></pre>
+        </section>
+
+        <section id="troubleshooting">
+            <h2>Troubleshooting</h2>
+
+            <h3>Dashboard won't start</h3>
+            <pre><code># Check if port is already in use
+ss -tlnp | grep 8181
+
+# Kill any existing processes
+pkill -f dashboard.py
+
+# Restart
+./demo.sh</code></pre>
+
+            <h3>Camera not detected</h3>
+            <pre><code># List available cameras
+uv run -s capture_video.py --list-devices
+
+# Use a specific camera
+export VIDEO_DEVICE=/dev/video1
+./demo.sh</code></pre>
+
+            <h3>Detections not working</h3>
+            <ul class="checklist">
+                <li>Ensure good, even lighting</li>
+                <li>Stand 3-6 feet from camera</li>
+                <li>Raise hand clearly ABOVE shoulder level</li>
+                <li>Wear contrasting colors (not same as background)</li>
+            </ul>
+
+            <h3>Reset everything</h3>
+            <pre><code># Stop demo and clear all data
+# Press Ctrl+C, or:
+pkill -f demo.sh
+pkill -f dashboard.py
+rm -rf chunks/ processed/ pipeline.db</code></pre>
+        </section>
+    </div>
+
+    <footer>
+        <p>
+            <a href="https://github.com/aronchick/webcam-demo">GitHub Repository</a> ·
+            <a href="https://cloud.expanso.io">Expanso Cloud</a> ·
+            <a href="https://docs.expanso.io">Expanso Docs</a>
+        </p>
+        <p style="margin-top: 16px; font-size: 0.9em;">
+            Built for demonstrating edge computing with Expanso
+        </p>
+    </footer>
+</body>
+</html>

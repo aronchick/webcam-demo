@@ -8,24 +8,30 @@
 # ]
 # ///
 """
-Real-time dashboard for the webcam chunking pipeline.
-Polished UI with WebSocket updates, video playback, and annotated thumbnails.
-Includes a Pipelines tab with YAML configs for easy copy/paste.
+Real-time dashboard for the webcam pipeline demo.
+Features progressive UI stages and giant visual indicators visible from 20 feet.
 """
 
 import asyncio
 import json
 import os
 from pathlib import Path
+from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse, JSONResponse
+
+import db
 
 app = FastAPI(title="Webcam Pipeline Dashboard")
 
 CHUNKS_DIR = Path(os.environ.get("CHUNKS_DIR", "./chunks"))
 PROCESSED_DIR = Path(os.environ.get("PROCESSED_DIR", "./processed"))
+DB_PATH = Path(os.environ.get("DB_PATH", "./pipeline.db"))
 SCRIPT_DIR = Path(__file__).parent
+
+# Initialize database on startup
+db.init_db(DB_PATH)
 
 CATEGORIES = {
     "left_hand_raised": {"emoji": "👈", "color": "#10b981", "label": "Left Hand", "icon": "hand-left"},
@@ -36,8 +42,12 @@ CATEGORIES = {
 
 
 def get_stats() -> dict:
-    """Get current pipeline statistics."""
+    """Get current pipeline statistics from database and filesystem."""
+    # Get database stats
+    db_stats = db.get_full_stats(DB_PATH)
+
     stats = {
+        "stage": db_stats["stage"],
         "pending": 0,
         "pending_files": [],
         "categories": {},
@@ -45,15 +55,20 @@ def get_stats() -> dict:
         "latest_thumb": None,
         "recent_events": [],
         "total_processed": 0,
+        "session": db_stats["session"],
+        "latest_detection": db_stats["latest"],
     }
 
-    # Get pending chunks
+    # Get pending chunks from filesystem
     if CHUNKS_DIR.exists():
         pending = sorted(CHUNKS_DIR.glob("*.mp4"), key=lambda p: p.name)
         stats["pending"] = len(pending)
         stats["pending_files"] = [p.name for p in pending[-3:]]
 
-    # Count by category and find latest
+    # Use database counts
+    db_counts = db_stats["counts"]
+
+    # Count by category and find latest video
     latest_mtime = 0
     thumbs_dir = PROCESSED_DIR / "thumbnails"
 
@@ -67,7 +82,11 @@ def get_stats() -> dict:
                 reverse=True
             )
 
-        count = len(files)
+        # Use DB count if available, else file count
+        db_count = db_counts.get(cat_name, {}).get("count", 0)
+        file_count = len(files)
+        count = max(db_count, file_count)
+
         stats["categories"][cat_name] = {
             "count": count,
             **cat_info,
@@ -130,6 +149,27 @@ async def serve_thumb(filename: str):
     return {"error": "not found"}
 
 
+@app.post("/api/stage/{stage}")
+async def set_stage(stage: int):
+    """Set the current pipeline stage (called by pipelines on activation)."""
+    if stage < 0 or stage > 4:
+        raise HTTPException(status_code=400, detail="Stage must be 0-4")
+    db.set_pipeline_stage(stage, DB_PATH)
+    return {"status": "ok", "stage": stage}
+
+
+@app.get("/api/stage")
+async def get_stage():
+    """Get the current pipeline stage."""
+    return {"stage": db.get_pipeline_stage(DB_PATH)}
+
+
+@app.get("/api/stats")
+async def get_api_stats():
+    """Get full stats as JSON."""
+    return get_stats()
+
+
 @app.get("/api/pipelines")
 async def get_pipelines():
     """Return all pipeline YAML configs."""
@@ -167,7 +207,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if stats_json != last_stats:
                 await websocket.send_json(stats)
                 last_stats = stats_json
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.3)  # Slightly faster updates
     except WebSocketDisconnect:
         pass
 
@@ -181,7 +221,7 @@ async def dashboard():
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Webcam Pipeline</title>
+    <title>Expanso Pipeline Demo</title>
     <style>
         :root {
             --bg-primary: #0f172a;
@@ -205,7 +245,7 @@ async def dashboard():
             min-height: 100vh;
             overflow-x: hidden;
         }
-        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .container { max-width: 1600px; margin: 0 auto; padding: 20px; }
 
         /* Header */
         .header {
@@ -216,30 +256,40 @@ async def dashboard():
         }
         .logo { display: flex; align-items: center; gap: 12px; }
         .logo-icon {
-            width: 44px; height: 44px;
+            width: 50px; height: 50px;
             background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
             border-radius: 12px;
             display: flex; align-items: center; justify-content: center;
-            font-size: 1.5em;
+            font-size: 1.8em;
         }
         .logo-text h1 {
-            font-size: 1.5em;
+            font-size: 1.8em;
             background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        .logo-text p { font-size: 0.75em; color: var(--text-muted); }
-        .header-right { display: flex; align-items: center; gap: 12px; }
+        .logo-text p { font-size: 0.85em; color: var(--text-muted); }
+
+        .header-right { display: flex; align-items: center; gap: 16px; }
+        .stage-badge {
+            padding: 10px 20px;
+            background: var(--bg-secondary);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            font-size: 1em;
+            font-weight: 700;
+        }
+        .stage-badge.active { border-color: var(--accent-green); }
         .status-badge {
             display: flex; align-items: center; gap: 8px;
-            padding: 8px 16px;
+            padding: 10px 20px;
             background: var(--bg-secondary);
             border: 1px solid var(--border);
             border-radius: 20px;
-            font-size: 0.8em; font-weight: 600;
+            font-size: 0.9em; font-weight: 600;
         }
         .status-dot {
-            width: 8px; height: 8px;
+            width: 10px; height: 10px;
             border-radius: 50%;
             background: var(--accent-green);
             animation: pulse 1.5s infinite;
@@ -247,73 +297,25 @@ async def dashboard():
         .status-dot.disconnected { background: #ef4444; animation: none; }
         @keyframes pulse {
             0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
-            50% { opacity: 0.8; box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+            50% { opacity: 0.8; box-shadow: 0 0 0 10px rgba(16,185,129,0); }
         }
 
-        /* Tab Navigation */
-        .tab-nav {
-            display: flex;
-            gap: 4px;
-            background: var(--bg-secondary);
-            padding: 4px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-        }
-        .tab-btn {
-            padding: 10px 20px;
-            border: none;
-            background: transparent;
-            color: var(--text-muted);
-            font-size: 0.9em;
-            font-weight: 600;
-            cursor: pointer;
-            border-radius: 8px;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .tab-btn:hover {
-            color: var(--text-primary);
-            background: var(--bg-tertiary);
-        }
-        .tab-btn.active {
-            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-            color: white;
-        }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Main Grid */
-        .main-grid {
+        /* Main Layout */
+        .main-layout {
             display: grid;
-            grid-template-columns: 1fr 380px;
+            grid-template-columns: 1fr 400px;
             gap: 24px;
         }
-        @media (max-width: 1024px) { .main-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 1200px) { .main-layout { grid-template-columns: 1fr; } }
 
         /* Video Section */
         .video-section {
             background: var(--bg-secondary);
-            border-radius: 20px;
-            padding: 20px;
+            border-radius: 24px;
+            padding: 24px;
             border: 1px solid var(--border);
-        }
-        .video-header {
-            display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 16px;
-        }
-        .video-title { color: var(--text-secondary); font-weight: 600; }
-        .video-badge {
-            padding: 6px 14px;
-            border-radius: 16px;
-            font-size: 0.85em;
-            font-weight: 600;
-            display: none;
+            position: relative;
+            overflow: hidden;
         }
         .video-container {
             position: relative;
@@ -323,304 +325,282 @@ async def dashboard():
             overflow: hidden;
         }
         video { width: 100%; height: 100%; object-fit: contain; }
-        .video-overlay {
+
+        /* Empty state (Stage 0) */
+        .empty-state {
             position: absolute;
             inset: 0;
             display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            background: rgba(0,0,0,0.8);
-            gap: 12px;
-        }
-        .video-overlay.hidden { display: none; }
-        .video-overlay-icon { font-size: 3em; opacity: 0.3; }
-        .video-overlay-text { color: var(--text-muted); }
-
-        /* Scanning line effect */
-        .scan-line {
-            position: absolute;
-            left: 0; right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, transparent, var(--accent-blue), transparent);
-            animation: scan 2.5s linear infinite;
-            opacity: 0.6;
-        }
-        @keyframes scan {
-            0% { top: -5%; }
-            100% { top: 105%; }
-        }
-
-        /* Detection overlay */
-        .detection-overlay {
-            position: absolute;
-            bottom: 16px; left: 16px; right: 16px;
-            background: rgba(15,23,42,0.9);
-            backdrop-filter: blur(12px);
-            border-radius: 12px;
-            padding: 16px;
-            border: 1px solid var(--border);
-            display: none;
-            animation: slideUp 0.3s ease-out;
-        }
-        .detection-overlay.visible { display: flex; align-items: center; gap: 16px; }
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .detection-icon {
-            width: 48px; height: 48px;
-            border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.5em;
-        }
-        .detection-info h3 { font-size: 1em; text-transform: uppercase; letter-spacing: 0.05em; }
-        .detection-info p { font-size: 0.8em; color: var(--text-muted); margin-top: 2px; }
-
-        /* Thumbnail preview - fixed size to prevent jumping */
-        .thumb-preview {
-            margin-top: 16px;
-            background: var(--bg-tertiary);
-            border-radius: 12px;
-            padding: 12px;
-            height: 100px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-        .thumb-preview.empty { opacity: 0.3; }
-        .thumb-preview img {
-            max-width: 140px;
-            max-height: 70px;
-            border-radius: 6px;
-            object-fit: contain;
-        }
-        .thumb-label {
-            font-size: 0.7em;
-            color: var(--text-muted);
-            margin-top: 6px;
-            text-align: center;
-        }
-
-        /* Video interstitial */
-        .video-interstitial {
-            position: absolute;
-            inset: 0;
-            display: none;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1));
-            gap: 12px;
+            gap: 20px;
         }
-        .video-interstitial.visible { display: flex; }
-        .interstitial-spinner {
-            width: 40px; height: 40px;
-            border: 3px solid var(--bg-tertiary);
-            border-top-color: var(--accent-blue);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
+        .empty-state.hidden { display: none; }
+        .empty-icon { font-size: 5em; opacity: 0.3; }
+        .empty-text { font-size: 1.5em; color: var(--text-muted); text-align: center; }
+        .empty-subtext { font-size: 1em; color: var(--text-muted); opacity: 0.7; }
+
+        /* Giant Detection Indicator */
+        .detection-giant {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            z-index: 10;
+            background: radial-gradient(circle, rgba(0,0,0,0.5) 0%, transparent 70%);
         }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .interstitial-text { color: var(--text-muted); font-size: 0.9em; }
+        .detection-giant.visible { display: flex; }
+        .detection-giant svg {
+            width: 400px;
+            height: 400px;
+            filter: drop-shadow(0 0 80px currentColor) drop-shadow(0 0 40px currentColor);
+            animation: detectPulse 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes detectPulse {
+            0% { transform: scale(0.3) rotate(-10deg); opacity: 0; }
+            60% { transform: scale(1.15) rotate(3deg); }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        /* Continuous glow animation while visible */
+        .detection-giant.visible svg {
+            animation: detectPulse 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), glowPulse 1.5s ease-in-out infinite 0.5s;
+        }
+        @keyframes glowPulse {
+            0%, 100% { filter: drop-shadow(0 0 60px currentColor) drop-shadow(0 0 30px currentColor); }
+            50% { filter: drop-shadow(0 0 100px currentColor) drop-shadow(0 0 50px currentColor); }
+        }
+
+        /* Color flash overlay */
+        .flash-overlay {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 5;
+            transition: opacity 0.15s;
+        }
+        .flash-overlay.flash {
+            animation: flashAnim 1s ease-out;
+        }
+        @keyframes flashAnim {
+            0% { opacity: 0.7; }
+            30% { opacity: 0.4; }
+            100% { opacity: 0; }
+        }
+
+        /* Pulsing border - much more dramatic */
+        .video-section.detecting {
+            animation: borderPulse 0.8s ease-in-out infinite;
+        }
+        @keyframes borderPulse {
+            0%, 100% {
+                box-shadow: 0 0 0 6px transparent, 0 0 40px var(--detect-color, var(--accent-green));
+            }
+            50% {
+                box-shadow: 0 0 0 6px var(--detect-color, var(--accent-green)), 0 0 80px var(--detect-color, var(--accent-green));
+            }
+        }
+
+        /* Scoreboard */
+        .scoreboard {
+            display: none;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 20px;
+            margin-top: 24px;
+            padding: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 16px;
+            align-items: center;
+        }
+        .scoreboard.visible { display: grid; }
+        .score-side {
+            text-align: center;
+            padding: 20px;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.2);
+        }
+        .score-side.left { border: 3px solid var(--accent-green); }
+        .score-side.right { border: 3px solid var(--accent-blue); }
+        .score-label {
+            font-size: 1.5em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 10px;
+        }
+        .score-value {
+            font-size: 5em;
+            font-weight: 900;
+            font-family: 'SF Mono', monospace;
+            line-height: 1;
+        }
+        .score-side.left .score-label { color: var(--accent-green); }
+        .score-side.left .score-value { color: var(--accent-green); }
+        .score-side.right .score-label { color: var(--accent-blue); }
+        .score-side.right .score-value { color: var(--accent-blue); }
+        .score-vs {
+            font-size: 2em;
+            font-weight: 900;
+            color: var(--text-muted);
+        }
 
         /* Stats row */
         .stats-row {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-top: 16px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-top: 20px;
         }
         .stat-card {
             background: var(--bg-tertiary);
             border-radius: 12px;
             padding: 16px;
-            display: flex; justify-content: space-between; align-items: center;
+            text-align: center;
         }
-        .stat-label { font-size: 0.7em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; }
-        .stat-value { font-size: 1.5em; font-weight: bold; font-family: monospace; }
-        .stat-icon { font-size: 1.5em; opacity: 0.3; }
+        .stat-label { font-size: 0.75em; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; }
+        .stat-value { font-size: 1.8em; font-weight: bold; font-family: monospace; margin-top: 4px; }
 
         /* Sidebar */
-        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+        .sidebar { display: flex; flex-direction: column; gap: 20px; }
 
-        /* Pending card - fixed height */
-        .pending-card {
-            background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05));
-            border: 1px solid rgba(245,158,11,0.3);
-            border-radius: 16px;
-            padding: 20px;
-            text-align: center;
-            height: 140px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
-        .pending-label { font-size: 0.75em; color: var(--accent-amber); text-transform: uppercase; letter-spacing: 0.1em; }
-        .pending-count {
-            font-size: 3em;
-            font-weight: bold;
-            color: var(--accent-amber);
-            text-shadow: 0 0 30px rgba(245,158,11,0.3);
-            font-family: monospace;
-            line-height: 1.2;
-        }
-        .pending-files {
-            font-size: 0.7em;
-            color: var(--text-muted);
-            margin-top: 8px;
-            height: 1.5em;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        /* Category grid - fixed card sizes */
+        /* Category cards */
         .category-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            gap: 16px;
         }
         .cat-card {
             background: var(--bg-secondary);
-            border: 2px solid var(--border);
-            border-radius: 16px;
-            padding: 16px;
+            border: 3px solid var(--border);
+            border-radius: 20px;
+            padding: 24px;
             text-align: center;
             transition: all 0.3s;
-            height: 130px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
         }
         .cat-card.active {
-            background: var(--bg-tertiary);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            transform: scale(1.05);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
         }
         .cat-icon {
-            width: 44px; height: 44px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.05);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.4em;
-            transition: transform 0.3s;
-            flex-shrink: 0;
+            font-size: 3em;
+            margin-bottom: 8px;
         }
-        .cat-card.active .cat-icon { transform: scale(1.1); }
-        .cat-count { font-size: 1.8em; font-weight: bold; font-family: monospace; margin: 4px 0; }
-        .cat-label { font-size: 0.7em; color: var(--text-muted); text-transform: uppercase; }
+        .cat-count {
+            font-size: 3em;
+            font-weight: 900;
+            font-family: monospace;
+        }
+        .cat-label {
+            font-size: 0.9em;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-top: 4px;
+        }
 
         /* Event log */
         .event-log {
-            flex: 1;
             background: var(--bg-secondary);
             border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 16px;
-            min-height: 280px;
+            border-radius: 20px;
+            padding: 20px;
+            flex: 1;
+            min-height: 300px;
             display: flex;
             flex-direction: column;
         }
         .event-log-header {
-            display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 12px;
-        }
-        .event-log-title {
-            font-size: 0.8em;
+            font-size: 0.9em;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.1em;
+            margin-bottom: 16px;
         }
         .event-list {
             flex: 1;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 10px;
         }
         .event-item {
             display: flex;
             align-items: center;
             gap: 12px;
-            padding: 10px 12px;
+            padding: 12px;
             background: rgba(0,0,0,0.2);
-            border-radius: 10px;
-            animation: fadeIn 0.3s ease-out;
+            border-radius: 12px;
+            border-left: 4px solid var(--border);
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateX(-10px); }
+        .event-item.new { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-20px); }
             to { opacity: 1; transform: translateX(0); }
         }
         .event-thumb {
-            width: 48px; height: 27px;
-            border-radius: 4px;
+            width: 64px; height: 36px;
+            border-radius: 6px;
             background: var(--bg-tertiary);
             overflow: hidden;
             flex-shrink: 0;
         }
         .event-thumb img { width: 100%; height: 100%; object-fit: cover; }
-        .event-details { flex: 1; min-width: 0; }
-        .event-name { font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .event-time { font-size: 0.7em; color: var(--text-muted); }
-        .event-badge {
-            font-size: 0.7em;
-            padding: 3px 8px;
-            border-radius: 8px;
-            font-weight: 600;
+        .event-details { flex: 1; }
+        .event-category { font-weight: 600; }
+        .event-time { font-size: 0.8em; color: var(--text-muted); }
+
+        /* Confetti container */
+        .confetti-container {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 100;
+            overflow: hidden;
+        }
+        .confetti {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            opacity: 0;
+        }
+        .confetti.animate {
+            animation: confettiFall 3s ease-out forwards;
+        }
+        @keyframes confettiFall {
+            0% { transform: translateY(-100px) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
         }
 
-        /* Footer */
-        .footer {
-            text-align: center;
-            padding: 30px;
-            color: var(--text-muted);
-            font-size: 0.8em;
+        /* Performance display */
+        .perf-display {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-family: monospace;
+            font-size: 0.85em;
+            color: var(--accent-green);
+            z-index: 50;
         }
-        .footer a { color: var(--accent-blue); text-decoration: none; }
-        .footer a:hover { text-decoration: underline; }
 
-        /* Pipelines Page Styles */
-        .pipelines-intro {
-            background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1));
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 20px 24px;
-            margin-bottom: 20px;
-        }
-        .pipelines-intro h2 {
-            font-size: 1.2em;
-            margin-bottom: 6px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .pipelines-intro p {
-            color: var(--text-secondary);
-            font-size: 0.9em;
-            line-height: 1.5;
-        }
-        .pipelines-intro a {
-            color: var(--accent-cyan);
-            text-decoration: none;
-        }
-        .pipelines-intro a:hover { text-decoration: underline; }
-
-        /* Pipeline tabs */
-        .pipeline-tabs {
+        /* Tab styles */
+        .tab-nav {
             display: flex;
             gap: 8px;
-            margin-bottom: 16px;
-            flex-wrap: wrap;
+            margin-bottom: 24px;
         }
-        .pipeline-tab {
-            padding: 12px 20px;
-            border: 2px solid var(--border);
+        .tab-btn {
+            padding: 12px 24px;
+            border: none;
             background: var(--bg-secondary);
-            color: var(--text-secondary);
-            font-size: 0.9em;
+            color: var(--text-muted);
+            font-size: 1em;
             font-weight: 600;
             cursor: pointer;
             border-radius: 12px;
@@ -629,177 +609,65 @@ async def dashboard():
             align-items: center;
             gap: 10px;
         }
-        .pipeline-tab:hover {
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-        }
-        .pipeline-tab.active {
-            border-color: var(--accent-blue);
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-        }
-        .pipeline-tab .stage-num {
-            width: 28px; height: 28px;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 0.85em;
+        .tab-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+        .tab-btn.active {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
             color: white;
         }
-        .pipeline-tab .stage-num.s1 { background: var(--accent-blue); }
-        .pipeline-tab .stage-num.s2 { background: var(--accent-green); }
-        .pipeline-tab .stage-num.s3 { background: var(--accent-amber); }
-        .pipeline-tab .stage-num.s4 { background: var(--accent-purple); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
 
-        .pipeline-content {
-            display: none;
-        }
-        .pipeline-content.active {
-            display: block;
-        }
-
+        /* Pipelines tab */
         .pipeline-card {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
             border-radius: 16px;
+            margin-bottom: 20px;
             overflow: hidden;
         }
-
         .pipeline-header {
-            padding: 16px 20px;
+            padding: 20px;
             background: var(--bg-tertiary);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid var(--border);
         }
-        .pipeline-title {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        .pipeline-stage {
-            width: 36px; height: 36px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 1em;
-            color: white;
-        }
-        .pipeline-stage.s1 { background: var(--accent-blue); }
-        .pipeline-stage.s2 { background: var(--accent-green); }
-        .pipeline-stage.s3 { background: var(--accent-amber); }
-        .pipeline-stage.s4 { background: var(--accent-purple); }
-        .pipeline-name {
-            font-weight: 600;
-            font-size: 1.1em;
-        }
-        .pipeline-desc {
-            font-size: 0.85em;
-            color: var(--text-muted);
-            margin-top: 2px;
-        }
-
-        .pipeline-actions {
-            display: flex;
-            gap: 10px;
-        }
-        .btn {
-            padding: 10px 18px;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.85em;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            text-decoration: none;
-        }
+        .pipeline-title { font-size: 1.2em; font-weight: 700; }
         .btn-copy {
+            padding: 10px 20px;
             background: var(--accent-blue);
             color: white;
-        }
-        .btn-copy:hover { background: #2563eb; }
-        .btn-copy.copied {
-            background: var(--accent-green);
-        }
-        .btn-download {
-            background: var(--bg-primary);
-            color: var(--text-secondary);
-            border: 1px solid var(--border);
-        }
-        .btn-download:hover {
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-        }
-
-        .pipeline-code {
-            position: relative;
-            max-height: 500px;
-            overflow: auto;
-        }
-        .pipeline-code pre {
-            margin: 0;
-            padding: 20px 24px;
-            font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
-            font-size: 0.85em;
-            line-height: 1.7;
-            overflow-x: auto;
-            background: var(--bg-primary);
-        }
-        .pipeline-code code {
-            display: block;
-            color: var(--text-primary);
-        }
-
-        /* YAML Syntax Highlighting */
-        .yaml-comment { color: #6b7280; font-style: italic; }
-        .yaml-key { color: #60a5fa; }
-        .yaml-string { color: #34d399; }
-        .yaml-number { color: #fbbf24; }
-        .yaml-bool { color: #f472b6; }
-        .yaml-null { color: #9ca3af; }
-
-        /* Copy notification */
-        .copy-toast {
-            position: fixed;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%) translateY(100px);
-            background: var(--accent-green);
-            color: white;
-            padding: 12px 24px;
+            border: none;
             border-radius: 8px;
             font-weight: 600;
-            opacity: 0;
-            transition: all 0.3s ease;
-            z-index: 1000;
+            cursor: pointer;
         }
-        .copy-toast.show {
-            transform: translateX(-50%) translateY(0);
-            opacity: 1;
+        .btn-copy:hover { background: #2563eb; }
+        .pipeline-code {
+            padding: 20px;
+            background: var(--bg-primary);
+            font-family: monospace;
+            font-size: 0.85em;
+            line-height: 1.6;
+            overflow-x: auto;
+            white-space: pre;
         }
     </style>
 </head>
 <body>
-    <div class="copy-toast" id="copy-toast">Copied to clipboard!</div>
+    <div class="confetti-container" id="confetti-container"></div>
 
     <div class="container">
         <header class="header">
             <div class="logo">
-                <div class="logo-icon">📹</div>
+                <div class="logo-icon">🚀</div>
                 <div class="logo-text">
-                    <h1>Webcam Pipeline</h1>
-                    <p>Real-time pose classification</p>
+                    <h1>Expanso Pipeline Demo</h1>
+                    <p>Edge Computing in Action</p>
                 </div>
             </div>
             <div class="header-right">
+                <div class="stage-badge" id="stage-badge">Stage: <span id="stage-num">0</span></div>
                 <div class="status-badge">
                     <span class="status-dot" id="status-dot"></span>
                     <span id="status-text">Connecting...</span>
@@ -807,7 +675,6 @@ async def dashboard():
             </div>
         </header>
 
-        <!-- Tab Navigation -->
         <nav class="tab-nav">
             <button class="tab-btn active" onclick="switchTab('dashboard')">
                 <span>📊</span> Dashboard
@@ -819,173 +686,197 @@ async def dashboard():
 
         <!-- Dashboard Tab -->
         <div id="tab-dashboard" class="tab-content active">
-        <main class="main-grid">
-            <div class="video-section">
-                <div class="video-header">
-                    <span class="video-title">Latest Processed Chunk</span>
-                    <span class="video-badge" id="video-badge"></span>
-                </div>
-                <div class="video-container">
-                    <video id="video-player" autoplay muted playsinline></video>
-                    <div class="scan-line"></div>
-                    <div class="video-overlay" id="video-overlay">
-                        <div class="video-overlay-icon">📹</div>
-                        <div class="video-overlay-text">Waiting for processed chunks...</div>
-                    </div>
-                    <div class="video-interstitial" id="video-interstitial">
-                        <div class="interstitial-spinner"></div>
-                        <div class="interstitial-text">Loading next clip...</div>
-                    </div>
-                    <div class="detection-overlay" id="detection-overlay">
-                        <div class="detection-icon" id="detection-icon">👈</div>
-                        <div class="detection-info">
-                            <h3 id="detection-label">Left Hand</h3>
-                            <p>Detected in latest chunk</p>
+            <div class="main-layout">
+                <div class="video-section" id="video-section">
+                    <div class="video-container" id="video-container">
+                        <video id="video-player" autoplay muted playsinline></video>
+
+                        <!-- Empty state overlay -->
+                        <div class="empty-state" id="empty-state">
+                            <div class="empty-icon">🎬</div>
+                            <div class="empty-text">Deploy a pipeline to begin</div>
+                            <div class="empty-subtext">Go to Pipelines tab and deploy Stage 1</div>
+                        </div>
+
+                        <!-- Flash overlay for detections -->
+                        <div class="flash-overlay" id="flash-overlay"></div>
+
+                        <!-- Giant detection indicator -->
+                        <div class="detection-giant" id="detection-giant">
+                            <!-- SVG will be inserted here -->
                         </div>
                     </div>
-                </div>
-                <div class="thumb-preview empty" id="thumb-preview">
-                    <img id="thumb-img" src="" alt="Detection thumbnail" style="display:none">
-                    <div class="thumb-label">Annotated detection frame</div>
-                </div>
-                <div class="stats-row">
-                    <div class="stat-card">
-                        <div>
+
+                    <!-- Scoreboard (Stage 3+) -->
+                    <div class="scoreboard" id="scoreboard">
+                        <div class="score-side left">
+                            <div class="score-label">Left Hand</div>
+                            <div class="score-value" id="score-left">0</div>
+                        </div>
+                        <div class="score-vs">VS</div>
+                        <div class="score-side right">
+                            <div class="score-label">Right Hand</div>
+                            <div class="score-value" id="score-right">0</div>
+                        </div>
+                    </div>
+
+                    <!-- Stats row -->
+                    <div class="stats-row">
+                        <div class="stat-card">
                             <div class="stat-label">Total Processed</div>
                             <div class="stat-value" id="total-processed">0</div>
                         </div>
-                        <div class="stat-icon">📊</div>
-                    </div>
-                    <div class="stat-card">
-                        <div>
-                            <div class="stat-label">Chunk Duration</div>
-                            <div class="stat-value">3s</div>
+                        <div class="stat-card">
+                            <div class="stat-label">Pending</div>
+                            <div class="stat-value" id="pending-count">0</div>
                         </div>
-                        <div class="stat-icon">⏱️</div>
+                        <div class="stat-card">
+                            <div class="stat-label">Avg Time</div>
+                            <div class="stat-value" id="avg-time">--</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Session</div>
+                            <div class="stat-value" id="session-duration">0:00</div>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="sidebar">
-                <div class="pending-card">
-                    <div class="pending-label">Chunks Pending</div>
-                    <div class="pending-count" id="pending-count">0</div>
-                    <div class="pending-files" id="pending-files">No pending chunks</div>
-                </div>
+                <div class="sidebar">
+                    <div class="category-grid" id="category-grid"></div>
 
-                <div class="category-grid" id="category-grid"></div>
-
-                <div class="event-log">
-                    <div class="event-log-header">
-                        <span class="event-log-title">🕐 Recent Activity</span>
-                    </div>
-                    <div class="event-list" id="event-list">
-                        <div style="color: var(--text-muted); text-align: center; padding: 40px;">
-                            Waiting for activity...
+                    <div class="event-log">
+                        <div class="event-log-header">Recent Activity</div>
+                        <div class="event-list" id="event-list">
+                            <div style="color: var(--text-muted); text-align: center; padding: 40px;">
+                                Waiting for detections...
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </main>
-        </div><!-- end tab-dashboard -->
+        </div>
 
         <!-- Pipelines Tab -->
         <div id="tab-pipelines" class="tab-content">
-            <div class="pipelines-intro">
-                <h2>🚀 Expanso Pipeline Configs</h2>
-                <p>
-                    Deploy these pipelines progressively via <a href="https://cloud.expanso.io" target="_blank">Expanso Cloud</a>.
-                    Copy the YAML and paste into the pipeline editor.
-                </p>
-            </div>
-
-            <div class="pipeline-tabs" id="pipeline-tabs">
-                <!-- Tabs rendered by JS -->
-            </div>
-
-            <div id="pipeline-panels">
-                <div style="color: var(--text-muted); text-align: center; padding: 40px;">
+            <div id="pipelines-container">
+                <div style="color: var(--text-muted); text-align: center; padding: 60px;">
                     Loading pipelines...
                 </div>
             </div>
-        </div><!-- end tab-pipelines -->
+        </div>
+    </div>
 
-        <footer class="footer">
-            Powered by <a href="https://ai.google.dev/edge/mediapipe" target="_blank">MediaPipe</a> ·
-            <a href="https://ffmpeg.org" target="_blank">FFmpeg</a> ·
-            <a href="https://fastapi.tiangolo.com" target="_blank">FastAPI</a> ·
-            <a href="https://expanso.io" target="_blank">Expanso</a>
-        </footer>
+    <div class="perf-display" id="perf-display">
+        Processing: <span id="perf-time">--</span>ms
     </div>
 
     <script>
+        // SVG icons for giant detection display - designed to be visible from 20+ feet
+        const HAND_SVGS = {
+            left_hand_raised: `<svg viewBox="0 0 200 200" style="color: #10b981;">
+                <!-- Glowing background circle -->
+                <circle cx="100" cy="85" r="70" fill="rgba(16,185,129,0.15)"/>
+                <circle cx="100" cy="85" r="55" fill="rgba(16,185,129,0.2)"/>
+                <!-- Large pointing hand (left) -->
+                <g transform="translate(100,85)">
+                    <!-- Hand base -->
+                    <ellipse cx="15" cy="0" rx="30" ry="25" fill="rgba(16,185,129,0.3)" stroke="#10b981" stroke-width="4"/>
+                    <!-- Pointing finger -->
+                    <path d="M-15,0 L-60,0" stroke="#10b981" stroke-width="12" stroke-linecap="round"/>
+                    <!-- Arrow head -->
+                    <path d="M-50,-18 L-70,0 L-50,18" stroke="#10b981" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </g>
+                <!-- Large label -->
+                <text x="100" y="175" text-anchor="middle" fill="#10b981" font-size="28" font-weight="900" font-family="system-ui">LEFT</text>
+            </svg>`,
+            right_hand_raised: `<svg viewBox="0 0 200 200" style="color: #3b82f6;">
+                <!-- Glowing background circle -->
+                <circle cx="100" cy="85" r="70" fill="rgba(59,130,246,0.15)"/>
+                <circle cx="100" cy="85" r="55" fill="rgba(59,130,246,0.2)"/>
+                <!-- Large pointing hand (right) -->
+                <g transform="translate(100,85)">
+                    <!-- Hand base -->
+                    <ellipse cx="-15" cy="0" rx="30" ry="25" fill="rgba(59,130,246,0.3)" stroke="#3b82f6" stroke-width="4"/>
+                    <!-- Pointing finger -->
+                    <path d="M15,0 L60,0" stroke="#3b82f6" stroke-width="12" stroke-linecap="round"/>
+                    <!-- Arrow head -->
+                    <path d="M50,-18 L70,0 L50,18" stroke="#3b82f6" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </g>
+                <!-- Large label -->
+                <text x="100" y="175" text-anchor="middle" fill="#3b82f6" font-size="28" font-weight="900" font-family="system-ui">RIGHT</text>
+            </svg>`,
+            both_hands_raised: `<svg viewBox="0 0 200 200" style="color: #8b5cf6;">
+                <!-- Glowing background -->
+                <ellipse cx="100" cy="75" rx="85" ry="60" fill="rgba(139,92,246,0.15)"/>
+                <ellipse cx="100" cy="75" rx="70" ry="45" fill="rgba(139,92,246,0.2)"/>
+                <!-- Two raised hands -->
+                <g transform="translate(55,75)">
+                    <ellipse cx="0" cy="15" rx="22" ry="18" fill="rgba(139,92,246,0.3)" stroke="#8b5cf6" stroke-width="3"/>
+                    <path d="M0,0 L0,-40" stroke="#8b5cf6" stroke-width="10" stroke-linecap="round"/>
+                    <path d="M-12,-30 L0,-45 L12,-30" stroke="#8b5cf6" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </g>
+                <g transform="translate(145,75)">
+                    <ellipse cx="0" cy="15" rx="22" ry="18" fill="rgba(139,92,246,0.3)" stroke="#8b5cf6" stroke-width="3"/>
+                    <path d="M0,0 L0,-40" stroke="#8b5cf6" stroke-width="10" stroke-linecap="round"/>
+                    <path d="M-12,-30 L0,-45 L12,-30" stroke="#8b5cf6" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </g>
+                <!-- Large label -->
+                <text x="100" y="175" text-anchor="middle" fill="#8b5cf6" font-size="24" font-weight="900" font-family="system-ui">BOTH HANDS!</text>
+            </svg>`,
+        };
+
+        const COLORS = {
+            left_hand_raised: '#10b981',
+            right_hand_raised: '#3b82f6',
+            both_hands_raised: '#8b5cf6',
+            no_detection: '#64748b',
+        };
+
+        const LABELS = {
+            left_hand_raised: 'Left Hand',
+            right_hand_raised: 'Right Hand',
+            both_hands_raised: 'Both Hands',
+            no_detection: 'No Detection',
+        };
+
         let ws;
         let currentVideo = null;
-        let reconnectAttempts = 0;
+        let currentStage = 0;
+        let lastDetectionVideo = null;  // Track which video we last showed effects for
         let videoEnded = false;
-        let pipelinesLoaded = false;
+        let seenEvents = new Set();
 
-        const categories = {
-            left_hand_raised: { emoji: '👈', color: '#10b981', label: 'Left Hand' },
-            right_hand_raised: { emoji: '👉', color: '#3b82f6', label: 'Right Hand' },
-            both_hands_raised: { emoji: '🙌', color: '#8b5cf6', label: 'Both Hands' },
-            no_detection: { emoji: '👤', color: '#64748b', label: 'No Detection' },
-        };
-
-        const pipelineInfo = {
-            '01-capture': { stage: 1, name: 'Video Capture', desc: 'Webcam capture in 3-second chunks' },
-            '02-detection': { stage: 2, name: 'ML Detection', desc: 'Real-time pose detection with MediaPipe' },
-            '03-counting': { stage: 3, name: 'Counting & Stats', desc: 'Gesture counting and statistics' },
-            '04-alerts': { stage: 4, name: 'Alerts & Triggers', desc: 'Real-time alerts and visual effects' },
-        };
-
-        // Tab switching
-        function switchTab(tabName) {
-            // Update buttons
+        function switchTab(name) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             event.target.closest('.tab-btn').classList.add('active');
-
-            // Update content
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
-            document.getElementById('tab-' + tabName).classList.add('active');
+            document.getElementById('tab-' + name).classList.add('active');
 
-            // Load pipelines on first visit
-            if (tabName === 'pipelines' && !pipelinesLoaded) {
-                loadPipelines();
-            }
+            if (name === 'pipelines') loadPipelines();
         }
 
-        // YAML syntax highlighting
-        function highlightYaml(yaml) {
-            return yaml
-                .split('\\n')
-                .map(line => {
-                    // Comments
-                    if (line.trim().startsWith('#')) {
-                        return `<span class="yaml-comment">${escapeHtml(line)}</span>`;
-                    }
-                    // Key-value pairs
-                    const match = line.match(/^(\\s*)([\\w-]+)(:\\s*)(.*)$/);
-                    if (match) {
-                        const [, indent, key, colon, value] = match;
-                        let highlightedValue = escapeHtml(value);
+        async function loadPipelines() {
+            try {
+                const res = await fetch('/api/pipelines');
+                const pipelines = await res.json();
 
-                        // Highlight different value types
-                        if (value.startsWith('"') || value.startsWith("'")) {
-                            highlightedValue = `<span class="yaml-string">${escapeHtml(value)}</span>`;
-                        } else if (/^\\d+(\\.\\d+)?$/.test(value)) {
-                            highlightedValue = `<span class="yaml-number">${escapeHtml(value)}</span>`;
-                        } else if (value === 'true' || value === 'false') {
-                            highlightedValue = `<span class="yaml-bool">${escapeHtml(value)}</span>`;
-                        } else if (value === 'null' || value === '~') {
-                            highlightedValue = `<span class="yaml-null">${escapeHtml(value)}</span>`;
-                        }
-
-                        return `${escapeHtml(indent)}<span class="yaml-key">${escapeHtml(key)}</span>${escapeHtml(colon)}${highlightedValue}`;
-                    }
-                    return escapeHtml(line);
-                })
-                .join('\\n');
+                let html = '';
+                pipelines.forEach((p, i) => {
+                    html += `
+                        <div class="pipeline-card">
+                            <div class="pipeline-header">
+                                <div class="pipeline-title">Stage ${i+1}: ${p.name}</div>
+                                <button class="btn-copy" onclick="copyPipeline('${p.name}')">Copy YAML</button>
+                            </div>
+                            <div class="pipeline-code">${escapeHtml(p.content)}</div>
+                        </div>
+                    `;
+                });
+                document.getElementById('pipelines-container').innerHTML = html;
+            } catch (e) {
+                document.getElementById('pipelines-container').innerHTML =
+                    '<div style="color: #ef4444; text-align: center; padding: 40px;">Error loading pipelines</div>';
+            }
         }
 
         function escapeHtml(text) {
@@ -994,128 +885,205 @@ async def dashboard():
             return div.innerHTML;
         }
 
-        // Load and render pipelines as tabs
-        let currentPipelineTab = 0;
+        async function copyPipeline(name) {
+            const res = await fetch('/api/pipeline/' + name + '.yaml');
+            const yaml = await res.text();
+            navigator.clipboard.writeText(yaml);
+            alert('Copied to clipboard!');
+        }
 
-        async function loadPipelines() {
-            try {
-                const response = await fetch('/api/pipelines');
-                const pipelines = await response.json();
+        function triggerFlash(category) {
+            const flash = document.getElementById('flash-overlay');
+            const color = COLORS[category] || COLORS.no_detection;
+            flash.style.background = color;
+            flash.classList.remove('flash');
+            void flash.offsetWidth; // Trigger reflow
+            flash.classList.add('flash');
+        }
 
-                if (pipelines.length === 0) {
-                    document.getElementById('pipeline-panels').innerHTML = `
-                        <div style="color: var(--text-muted); text-align: center; padding: 40px;">
-                            No pipeline configs found in ./pipelines/
-                        </div>
-                    `;
-                    return;
-                }
+        function showGiantIndicator(category) {
+            const giant = document.getElementById('detection-giant');
+            if (HAND_SVGS[category]) {
+                giant.innerHTML = HAND_SVGS[category];
+                giant.classList.add('visible');
+                setTimeout(() => giant.classList.remove('visible'), 2000);
+            }
+        }
 
-                // Render tabs
-                let tabsHtml = '';
-                pipelines.forEach((pipeline, idx) => {
-                    const info = pipelineInfo[pipeline.name] || { stage: '?', name: pipeline.name, desc: '' };
-                    tabsHtml += `
-                        <button class="pipeline-tab ${idx === 0 ? 'active' : ''}" onclick="switchPipelineTab(${idx})">
-                            <span class="stage-num s${info.stage}">${info.stage}</span>
-                            <span>${info.name}</span>
-                        </button>
-                    `;
-                });
-                document.getElementById('pipeline-tabs').innerHTML = tabsHtml;
+        function triggerConfetti() {
+            const container = document.getElementById('confetti-container');
+            const colors = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444'];
 
-                // Render panels
-                let panelsHtml = '';
-                pipelines.forEach((pipeline, idx) => {
-                    const info = pipelineInfo[pipeline.name] || { stage: '?', name: pipeline.name, desc: '' };
-                    panelsHtml += `
-                        <div class="pipeline-content ${idx === 0 ? 'active' : ''}" id="pipeline-panel-${idx}">
-                            <div class="pipeline-card">
-                                <div class="pipeline-header">
-                                    <div class="pipeline-title">
-                                        <div class="pipeline-stage s${info.stage}">${info.stage}</div>
-                                        <div>
-                                            <div class="pipeline-name">${info.name}</div>
-                                            <div class="pipeline-desc">${info.desc}</div>
-                                        </div>
-                                    </div>
-                                    <div class="pipeline-actions">
-                                        <button class="btn btn-copy" onclick="copyPipeline(this, '${pipeline.name}')">
-                                            <span>📋</span> Copy YAML
-                                        </button>
-                                        <a href="/api/pipeline/${pipeline.filename}" download class="btn btn-download">
-                                            <span>⬇</span> Download
-                                        </a>
-                                    </div>
-                                </div>
-                                <div class="pipeline-code">
-                                    <pre><code>${highlightYaml(pipeline.content)}</code></pre>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-                document.getElementById('pipeline-panels').innerHTML = panelsHtml;
+            for (let i = 0; i < 50; i++) {
+                const confetti = document.createElement('div');
+                confetti.className = 'confetti';
+                confetti.style.left = Math.random() * 100 + '%';
+                confetti.style.background = colors[Math.floor(Math.random() * colors.length)];
+                confetti.style.animationDelay = Math.random() * 0.5 + 's';
+                container.appendChild(confetti);
 
-                pipelinesLoaded = true;
-            } catch (err) {
-                document.getElementById('pipeline-panels').innerHTML = `
-                    <div style="color: var(--text-muted); text-align: center; padding: 40px;">
-                        Error loading pipelines: ${err.message}
+                setTimeout(() => confetti.classList.add('animate'), 10);
+                setTimeout(() => confetti.remove(), 3500);
+            }
+        }
+
+        function updateStageUI(stage) {
+            currentStage = stage;
+            document.getElementById('stage-num').textContent = stage;
+
+            const stageBadge = document.getElementById('stage-badge');
+            stageBadge.classList.toggle('active', stage > 0);
+
+            // Show/hide elements based on stage
+            document.getElementById('empty-state').classList.toggle('hidden', stage > 0);
+            document.getElementById('scoreboard').classList.toggle('visible', stage >= 3);
+        }
+
+        function formatDuration(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function updateDashboard(data) {
+            // Update stage
+            if (data.stage !== undefined) {
+                updateStageUI(data.stage);
+            }
+
+            // Update stats
+            document.getElementById('total-processed').textContent = data.total_processed;
+            document.getElementById('pending-count').textContent = data.pending;
+
+            if (data.session) {
+                document.getElementById('session-duration').textContent =
+                    formatDuration(data.session.duration_seconds || 0);
+            }
+
+            // Update scoreboard
+            if (data.categories) {
+                const leftCount = data.categories.left_hand_raised?.count || 0;
+                const rightCount = data.categories.right_hand_raised?.count || 0;
+                document.getElementById('score-left').textContent = leftCount;
+                document.getElementById('score-right').textContent = rightCount;
+            }
+
+            // Update category cards
+            let catHtml = '';
+            for (const [name, info] of Object.entries(data.categories || {})) {
+                const isActive = data.latest_video?.category === name;
+                const color = COLORS[name];
+                catHtml += `
+                    <div class="cat-card ${isActive ? 'active' : ''}"
+                         style="border-color: ${isActive ? color : 'var(--border)'}">
+                        <div class="cat-icon">${info.emoji}</div>
+                        <div class="cat-count" style="color: ${color}">${info.count}</div>
+                        <div class="cat-label">${LABELS[name]}</div>
                     </div>
                 `;
             }
-        }
+            document.getElementById('category-grid').innerHTML = catHtml;
 
-        function switchPipelineTab(idx) {
-            // Update tab buttons
-            document.querySelectorAll('.pipeline-tab').forEach((tab, i) => {
-                tab.classList.toggle('active', i === idx);
-            });
-            // Update panels
-            document.querySelectorAll('.pipeline-content').forEach((panel, i) => {
-                panel.classList.toggle('active', i === idx);
-            });
-            currentPipelineTab = idx;
-        }
+            // Handle new detection - trigger effects when we have a NEW video with a detection
+            if (data.latest_video && data.latest_video.category !== 'no_detection') {
+                const cat = data.latest_video.category;
+                const videoPath = data.latest_video.path;
 
-        // Copy pipeline to clipboard
-        async function copyPipeline(btn, name) {
-            try {
-                const response = await fetch(`/api/pipeline/${name}.yaml`);
-                const yaml = await response.text();
-                await navigator.clipboard.writeText(yaml);
+                // Trigger effects if this is a NEW video (not just same category)
+                if (videoPath !== lastDetectionVideo) {
+                    lastDetectionVideo = videoPath;
 
-                // Show copied state
-                btn.classList.add('copied');
-                btn.innerHTML = '<span>✓</span> Copied!';
+                    // Stage 2+: Show flash and giant indicator
+                    if (currentStage >= 2) {
+                        triggerFlash(cat);
+                        showGiantIndicator(cat);
 
-                // Show toast
-                const toast = document.getElementById('copy-toast');
-                toast.classList.add('show');
-                setTimeout(() => toast.classList.remove('show'), 2000);
+                        // Pulsing border
+                        const section = document.getElementById('video-section');
+                        section.style.setProperty('--detect-color', COLORS[cat]);
+                        section.classList.add('detecting');
+                        setTimeout(() => section.classList.remove('detecting'), 3000);
+                    }
 
-                // Reset button after delay
-                setTimeout(() => {
-                    btn.classList.remove('copied');
-                    btn.innerHTML = '<span>📋</span> Copy';
-                }, 2000);
-            } catch (err) {
-                alert('Failed to copy: ' + err.message);
+                    // Stage 4: Confetti for both hands
+                    if (currentStage >= 4 && cat === 'both_hands_raised') {
+                        triggerConfetti();
+                    }
+                }
+            }
+
+            // Update video
+            if (data.latest_video && (data.latest_video.path !== currentVideo || videoEnded)) {
+                currentVideo = data.latest_video.path;
+                videoEnded = false;
+                const video = document.getElementById('video-player');
+                video.src = currentVideo;
+                video.load();
+                video.play().catch(() => {});
+
+                // Update perf display
+                if (data.latest_detection?.processing_time_ms) {
+                    document.getElementById('perf-time').textContent =
+                        Math.round(data.latest_detection.processing_time_ms);
+                }
+            }
+
+            // Update event log
+            const events = data.recent_events?.slice(0, 8) || [];
+            if (events.length > 0) {
+                const newEvents = events.filter(e => !seenEvents.has(e.filename));
+
+                if (seenEvents.size === 0 || newEvents.length > 3) {
+                    // Full refresh
+                    let html = '';
+                    events.forEach(e => {
+                        seenEvents.add(e.filename);
+                        const color = COLORS[e.category];
+                        html += `
+                            <div class="event-item" style="border-left-color: ${color}">
+                                <div class="event-thumb">
+                                    ${e.thumb ? `<img src="${e.thumb}">` : ''}
+                                </div>
+                                <div class="event-details">
+                                    <div class="event-category" style="color: ${color}">${LABELS[e.category]}</div>
+                                    <div class="event-time">${e.filename}</div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    document.getElementById('event-list').innerHTML = html;
+                } else {
+                    // Prepend new items
+                    newEvents.reverse().forEach(e => {
+                        seenEvents.add(e.filename);
+                        const color = COLORS[e.category];
+                        const div = document.createElement('div');
+                        div.className = 'event-item new';
+                        div.style.borderLeftColor = color;
+                        div.innerHTML = `
+                            <div class="event-thumb">
+                                ${e.thumb ? `<img src="${e.thumb}">` : ''}
+                            </div>
+                            <div class="event-details">
+                                <div class="event-category" style="color: ${color}">${LABELS[e.category]}</div>
+                                <div class="event-time">${e.filename}</div>
+                            </div>
+                        `;
+                        const list = document.getElementById('event-list');
+                        list.insertBefore(div, list.firstChild);
+
+                        // Trim old items
+                        while (list.children.length > 8) {
+                            list.removeChild(list.lastChild);
+                        }
+                    });
+                }
             }
         }
 
-        // Video end handler - show interstitial instead of looping
-        document.addEventListener('DOMContentLoaded', () => {
-            const video = document.getElementById('video-player');
-            video.addEventListener('ended', () => {
-                videoEnded = true;
-                document.getElementById('video-interstitial').classList.add('visible');
-                document.getElementById('detection-overlay').classList.remove('visible');
-            });
-            video.addEventListener('play', () => {
-                document.getElementById('video-interstitial').classList.remove('visible');
-            });
+        // Video end handler
+        document.getElementById('video-player').addEventListener('ended', () => {
+            videoEnded = true;
         });
 
         function connect() {
@@ -1126,107 +1094,16 @@ async def dashboard():
                 document.getElementById('status-dot').classList.remove('disconnected');
                 document.getElementById('status-text').textContent = 'LIVE';
                 document.getElementById('status-text').style.color = '#10b981';
-                reconnectAttempts = 0;
             };
 
             ws.onclose = () => {
                 document.getElementById('status-dot').classList.add('disconnected');
                 document.getElementById('status-text').textContent = 'Reconnecting...';
                 document.getElementById('status-text').style.color = '';
-                setTimeout(connect, Math.min(1000 * Math.pow(2, reconnectAttempts++), 10000));
+                setTimeout(connect, 2000);
             };
 
             ws.onmessage = (e) => updateDashboard(JSON.parse(e.data));
-        }
-
-        function updateDashboard(data) {
-            // Pending
-            document.getElementById('pending-count').textContent = data.pending;
-            document.getElementById('pending-files').textContent =
-                data.pending_files.length ? data.pending_files.join(' → ') : 'No pending chunks';
-
-            // Total processed
-            document.getElementById('total-processed').textContent = data.total_processed;
-
-            // Categories
-            let catHtml = '';
-            for (const [name, info] of Object.entries(categories)) {
-                const catData = data.categories[name] || { count: 0 };
-                const isActive = data.latest_video?.category === name;
-                catHtml += `
-                    <div class="cat-card ${isActive ? 'active' : ''}"
-                         style="border-color: ${isActive ? info.color : 'var(--border)'}">
-                        <div class="cat-icon" style="background: ${info.color}22">${info.emoji}</div>
-                        <div class="cat-count" style="color: ${info.color}">${catData.count}</div>
-                        <div class="cat-label">${info.label}</div>
-                    </div>
-                `;
-            }
-            document.getElementById('category-grid').innerHTML = catHtml;
-
-            // Video player - only update if new video or video ended
-            if (data.latest_video && (data.latest_video.path !== currentVideo || videoEnded)) {
-                currentVideo = data.latest_video.path;
-                videoEnded = false;
-                const video = document.getElementById('video-player');
-                video.src = currentVideo;
-                video.load();
-                video.play().catch(() => {}); // Ignore autoplay errors
-
-                document.getElementById('video-overlay').classList.add('hidden');
-                document.getElementById('video-interstitial').classList.remove('visible');
-
-                const cat = categories[data.latest_video.category];
-                const badge = document.getElementById('video-badge');
-                badge.style.display = 'inline-block';
-                badge.style.background = cat.color;
-                badge.style.color = '#fff';
-                badge.textContent = `${cat.emoji} ${cat.label}`;
-
-                // Detection overlay
-                const overlay = document.getElementById('detection-overlay');
-                overlay.classList.add('visible');
-                document.getElementById('detection-icon').textContent = cat.emoji;
-                document.getElementById('detection-icon').style.background = cat.color + '33';
-                document.getElementById('detection-label').textContent = cat.label;
-                document.getElementById('detection-label').style.color = cat.color;
-            }
-
-            // Thumbnail - fixed size, always visible
-            const thumbPreview = document.getElementById('thumb-preview');
-            const thumbImg = document.getElementById('thumb-img');
-            if (data.latest_thumb) {
-                thumbImg.src = data.latest_thumb;
-                thumbImg.style.display = 'block';
-                thumbPreview.classList.remove('empty');
-            } else {
-                thumbImg.style.display = 'none';
-                thumbPreview.classList.add('empty');
-            }
-
-            // Event log
-            let eventHtml = '';
-            for (const event of data.recent_events.slice(0, 6)) {
-                const cat = categories[event.category];
-                const timeAgo = Math.floor((Date.now() - event.mtime * 1000) / 1000);
-                const timeStr = timeAgo < 60 ? `${timeAgo}s ago` : `${Math.floor(timeAgo/60)}m ago`;
-                eventHtml += `
-                    <div class="event-item">
-                        <div class="event-thumb">
-                            ${event.thumb ? `<img src="${event.thumb}" alt="">` : ''}
-                        </div>
-                        <div class="event-details">
-                            <div class="event-name">${event.filename}</div>
-                            <div class="event-time">${timeStr}</div>
-                        </div>
-                        <span class="event-badge" style="background: ${cat.color}22; color: ${cat.color}">
-                            ${cat.emoji}
-                        </span>
-                    </div>
-                `;
-            }
-            document.getElementById('event-list').innerHTML = eventHtml ||
-                '<div style="color: var(--text-muted); text-align: center; padding: 40px;">Waiting for activity...</div>';
         }
 
         connect();
@@ -1239,8 +1116,11 @@ async def dashboard():
 if __name__ == "__main__":
     import uvicorn
     import socket
+    import subprocess
+
     port = int(os.environ.get("PORT", "8181"))
-    # Get the machine's IP address for display
+
+    # Get the machine's IP address
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -1248,5 +1128,21 @@ if __name__ == "__main__":
         s.close()
     except Exception:
         ip = socket.gethostname()
-    print(f"\n  Dashboard running at http://{ip}:{port}\n")
+
+    # Get Tailscale IP if available
+    ts_ip = None
+    try:
+        result = subprocess.run(
+            ["tailscale", "ip", "-4"],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            ts_ip = result.stdout.strip().split('\n')[0]
+    except Exception:
+        pass
+
+    print(f"\n  Dashboard running at http://{ip}:{port}")
+    if ts_ip:
+        print(f"                     http://{ts_ip}:{port}")
+    print()
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

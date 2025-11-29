@@ -14,6 +14,7 @@ Environment Variables:
     CHUNK_DURATION: Duration of each chunk in seconds (default: 3)
     VIDEO_SIZE: Resolution (default: "1280x720")
     FRAMERATE: Frames per second (default: 30 for MacBook compatibility)
+    DB_PATH: Path to SQLite database (default: "./pipeline.db")
 """
 
 import os
@@ -23,6 +24,13 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Import database module for stage tracking
+try:
+    import db
+    HAS_DB = True
+except ImportError:
+    HAS_DB = False
 
 
 def get_platform_defaults() -> dict:
@@ -118,6 +126,13 @@ def main() -> int:
     chunk_duration = int(os.environ.get("CHUNK_DURATION", "3"))
     video_size = os.environ.get("VIDEO_SIZE", "1280x720")
     framerate = int(os.environ.get("FRAMERATE", "30"))  # MacBook cameras need 30fps
+    db_path = Path(os.environ.get("DB_PATH", "./pipeline.db"))
+
+    # Set pipeline stage to 1 (capture active)
+    if HAS_DB:
+        db.init_db(db_path)
+        db.set_pipeline_stage(1, db_path)
+        db.start_session(db_path)
 
     # Handle --list-devices flag
     if "--list-devices" in sys.argv:
