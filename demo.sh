@@ -34,17 +34,13 @@ get_ip() {
     hostname -I 2>/dev/null | awk '{print $1}' || hostname
 }
 
-# Get Tailscale IP address (if available)
-get_tailscale_ip() {
-    if command -v tailscale &> /dev/null; then
-        tailscale ip -4 2>/dev/null | head -1
-    fi
-}
+# Tailscale configuration
+TAILSCALE_URL="https://fepi.tail8e9db.ts.net"
 
-# Get Tailscale DNS name (if available)
+# Get Tailscale DNS name (verify it's actually available)
 get_tailscale_dns() {
-    if command -v tailscale &> /dev/null; then
-        tailscale status --json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null
+    if command -v tailscale &> /dev/null && tailscale status &>/dev/null; then
+        echo "fepi.tail8e9db.ts.net"
     fi
 }
 
@@ -52,9 +48,9 @@ get_tailscale_dns() {
 banner() {
     echo -e "${PURPLE}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${PURPLE}║                                                               ║${NC}"
-    echo -e "${PURPLE}║   ${WHITE}EXPANSO${PURPLE}  ${CYAN}WEBCAM PIPELINE DEMO${PURPLE}                             ║${NC}"
+    echo -e "${PURPLE}║   ${WHITE}EXPANSO${NC}${PURPLE}  ${CYAN}WEBCAM PIPELINE DEMO${NC}${PURPLE}                            ║${NC}"
     echo -e "${PURPLE}║                                                               ║${NC}"
-    echo -e "${PURPLE}║   Deploy pipelines via ${WHITE}cloud.expanso.io${PURPLE}                       ║${NC}"
+    echo -e "${PURPLE}║   Deploy pipelines via ${WHITE}cloud.expanso.io${NC}${PURPLE}                      ║${NC}"
     echo -e "${PURPLE}║                                                               ║${NC}"
     echo -e "${PURPLE}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""

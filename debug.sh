@@ -58,9 +58,12 @@ get_ip() {
     hostname -I 2>/dev/null | awk '{print $1}' || hostname
 }
 
+# Tailscale configuration
+TAILSCALE_URL="https://fepi.tail8e9db.ts.net"
+
 get_tailscale_dns() {
-    if command -v tailscale &> /dev/null; then
-        tailscale status --json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null
+    if command -v tailscale &> /dev/null && tailscale status &>/dev/null; then
+        echo "fepi.tail8e9db.ts.net"
     fi
 }
 
