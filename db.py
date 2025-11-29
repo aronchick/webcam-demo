@@ -6,7 +6,6 @@ Designed to be lightweight and work well on Raspberry Pi 5.
 """
 
 import sqlite3
-import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -15,30 +14,23 @@ from typing import Optional
 # Default database path
 DEFAULT_DB_PATH = Path(__file__).parent / "pipeline.db"
 
-# Thread-local storage for connections
-_local = threading.local()
-
-
-def get_connection(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    """Get a thread-local database connection."""
-    if not hasattr(_local, "connection") or _local.connection is None:
-        _local.connection = sqlite3.connect(str(db_path), check_same_thread=False)
-        _local.connection.row_factory = sqlite3.Row
-        _local.connection.execute("PRAGMA journal_mode=WAL")  # Better concurrent access
-        _local.connection.execute("PRAGMA synchronous=NORMAL")  # Faster writes
-    return _local.connection
-
 
 @contextmanager
 def get_db(db_path: Path = DEFAULT_DB_PATH):
-    """Context manager for database access."""
-    conn = get_connection(db_path)
+    """Context manager for database access - creates fresh connection each time."""
+    conn = sqlite3.connect(str(db_path), timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    # Use DELETE mode instead of WAL to avoid -shm/-wal files
+    conn.execute("PRAGMA journal_mode=DELETE")
+    conn.execute("PRAGMA synchronous=NORMAL")
     try:
         yield conn
         conn.commit()
     except Exception:
         conn.rollback()
         raise
+    finally:
+        conn.close()
 
 
 def init_db(db_path: Path = DEFAULT_DB_PATH) -> None:

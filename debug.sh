@@ -60,11 +60,20 @@ get_ip() {
 
 clear_data() {
     echo -e "${YELLOW}Clearing data...${NC}"
-    rm -rf chunks processed pipeline.db 2>/dev/null || true
+    # Kill any processes that might be holding the database
+    pkill -f "dashboard.py" 2>/dev/null || true
+    pkill -f "capture_video.py" 2>/dev/null || true
+    pkill -f "process_chunks.py" 2>/dev/null || true
+    sleep 0.5
+    # Remove all data files
+    rm -rf chunks processed 2>/dev/null || true
+    rm -f pipeline.db pipeline.db-shm pipeline.db-wal 2>/dev/null || true
+    # Recreate directories
     mkdir -p chunks processed/thumbnails
     for cat in left_hand_raised right_hand_raised both_hands_raised no_detection; do
         mkdir -p "processed/$cat"
     done
+    echo -e "${GREEN}Data cleared.${NC}"
 }
 
 start_dashboard() {
