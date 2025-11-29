@@ -232,7 +232,7 @@
 <body>
     <div class="hero">
         <h1>Expanso Webcam Pipeline Demo</h1>
-        <p>Step-by-step guide for running a progressive edge computing demo with real-time ML detection.</p>
+        <p>Step-by-step guide for running a progressive edge computing demo. Deploy pipelines via <a href="https://cloud.expanso.io" style="color: #60a5fa;">cloud.expanso.io</a> and watch the magic happen.</p>
     </div>
 
     <nav class="nav">
@@ -321,8 +321,7 @@ curl -X POST http://localhost:8181/api/stage/0  # Reset</code></pre>
                         "Let's deploy our first pipeline - video capture. This will stream video from the webcam in 3-second chunks."
                     </div>
                     <div class="action-box">
-                        Deploy the <strong>01-capture</strong> pipeline in Expanso Cloud<br>
-                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/1</code></em>
+                        Go to <a href="https://cloud.expanso.io" style="color: #f59e0b;">cloud.expanso.io</a> → Select your device → Deploy <strong>01-capture</strong> pipeline
                     </div>
                     <div class="visual-box">
                         <h4>Audience Sees</h4>
@@ -341,8 +340,7 @@ curl -X POST http://localhost:8181/api/stage/0  # Reset</code></pre>
                         "Now let's add intelligence. This pipeline adds ML-powered pose detection using MediaPipe. It can recognize when someone raises their left hand, right hand, or both."
                     </div>
                     <div class="action-box">
-                        Deploy the <strong>02-detection</strong> pipeline in Expanso Cloud<br>
-                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/2</code></em>
+                        In <a href="https://cloud.expanso.io" style="color: #f59e0b;">cloud.expanso.io</a> → Deploy <strong>02-detection</strong> pipeline
                     </div>
                     <div class="visual-box">
                         <h4>Audience Sees</h4>
@@ -364,8 +362,7 @@ curl -X POST http://localhost:8181/api/stage/0  # Reset</code></pre>
                         "Let's make this more fun. This pipeline adds a scoreboard to track left vs right gestures. We can use this for competitions or engagement tracking."
                     </div>
                     <div class="action-box">
-                        Deploy the <strong>03-counting</strong> pipeline in Expanso Cloud<br>
-                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/3</code></em>
+                        In <a href="https://cloud.expanso.io" style="color: #f59e0b;">cloud.expanso.io</a> → Deploy <strong>03-counting</strong> pipeline
                     </div>
                     <div class="visual-box">
                         <h4>Audience Sees</h4>
@@ -386,8 +383,7 @@ curl -X POST http://localhost:8181/api/stage/0  # Reset</code></pre>
                         "Finally, let's add some celebration! This pipeline triggers special effects when both hands are raised - perfect for engagement moments."
                     </div>
                     <div class="action-box">
-                        Deploy the <strong>04-alerts</strong> pipeline in Expanso Cloud<br>
-                        <em>Or simulate: <code>curl -X POST http://localhost:8181/api/stage/4</code></em>
+                        In <a href="https://cloud.expanso.io" style="color: #f59e0b;">cloud.expanso.io</a> → Deploy <strong>04-alerts</strong> pipeline
                     </div>
                     <div class="visual-box">
                         <h4>Audience Sees</h4>
@@ -458,16 +454,18 @@ curl -X POST http://localhost:8181/api/stage/0  # Reset</code></pre>
                 </tbody>
             </table>
 
-            <h3>Manual Stage Control (for testing)</h3>
-            <pre><code># Set stage via API
-curl -X POST http://localhost:8181/api/stage/1  # Stage 1
-curl -X POST http://localhost:8181/api/stage/2  # Stage 2
-curl -X POST http://localhost:8181/api/stage/3  # Stage 3
-curl -X POST http://localhost:8181/api/stage/4  # Stage 4
-curl -X POST http://localhost:8181/api/stage/0  # Reset
+            <h3>Local Debugging (Without Expanso Cloud)</h3>
+            <p>For development and testing, use the debug script:</p>
+            <pre><code># Interactive debug menu
+./debug.sh
 
-# Check current stage
-curl http://localhost:8181/api/stage</code></pre>
+# Run specific components
+./debug.sh dashboard    # Start dashboard only
+./debug.sh full         # Run full pipeline locally
+./debug.sh stage 2      # Manually set stage to 2</code></pre>
+            <p style="margin-top: 16px; padding: 12px; background: rgba(239,68,68,0.1); border-radius: 8px; border-left: 4px solid #ef4444;">
+                <strong>Note:</strong> Local debugging is for development only. For demos, always use <code>./demo.sh</code> and deploy via <a href="https://cloud.expanso.io" style="color: #60a5fa;">cloud.expanso.io</a>.
+            </p>
         </section>
 
         <section id="troubleshooting">

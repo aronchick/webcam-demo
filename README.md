@@ -1,8 +1,16 @@
 # Expanso Webcam Pipeline Demo
 
-A progressive demo showcasing **Expanso Cloud** for deploying intelligent edge computing pipelines. Watch as each pipeline deployment adds new capabilities in real-time.
+A progressive demo showcasing **[Expanso Cloud](https://cloud.expanso.io)** for deploying intelligent edge computing pipelines. Watch as each pipeline deployment adds new capabilities in real-time.
 
 **[View Full Documentation](https://aronchick.github.io/webcam-demo/)**
+
+---
+
+## How It Works
+
+1. **Start the demo** on your edge device (Raspberry Pi)
+2. **Deploy pipelines** progressively via [cloud.expanso.io](https://cloud.expanso.io)
+3. **Watch the dashboard** update as each pipeline activates
 
 ---
 
@@ -13,145 +21,72 @@ A progressive demo showcasing **Expanso Cloud** for deploying intelligent edge c
 git clone https://github.com/aronchick/webcam-demo.git
 cd webcam-demo
 
-# 2. Start the demo
+# 2. Start the demo (dashboard + Expanso agent)
 ./demo.sh
 
-# 3. Open dashboard in browser
-# URL will be displayed (e.g., http://192.168.1.100:8181)
+# 3. Open dashboard URL in browser (displayed in terminal)
+
+# 4. Go to cloud.expanso.io and deploy pipelines!
 ```
 
 ---
 
-## What This Demo Shows
+## Demo Stages
 
-| Stage | Pipeline | Visual Effect |
-|-------|----------|---------------|
-| 0 | None | Empty state - "Deploy a pipeline to begin" |
-| 1 | **Capture** | Video feed appears |
-| 2 | **Detection** | Giant hand icons flash + color pulse |
-| 3 | **Counting** | Stadium scoreboard (LEFT vs RIGHT) |
-| 4 | **Alerts** | Confetti explosion on both-hands |
+| Stage | Deploy This Pipeline | What Happens |
+|-------|---------------------|--------------|
+| 0 | *(none)* | Empty state - "Deploy a pipeline to begin" |
+| 1 | `01-capture` | Video feed appears |
+| 2 | `02-detection` | **Giant hand icons flash** on gesture detection |
+| 3 | `03-counting` | **Stadium scoreboard** shows LEFT vs RIGHT |
+| 4 | `04-alerts` | **Confetti explosion** on both-hands gesture |
 
 ---
 
-## Demo Script (Step-by-Step)
+## Running the Demo
 
-### Pre-Demo Setup (5 min before)
-
+### Step 1: Start the Demo
 ```bash
-# On your Raspberry Pi or demo machine:
-cd webcam-demo
 ./demo.sh
 ```
+This starts the dashboard and waits for pipelines from Expanso Cloud.
 
-Verify:
-- [ ] Dashboard loads at displayed URL
-- [ ] Shows "Deploy a pipeline to begin"
-- [ ] Webcam is connected and working
+### Step 2: Deploy Pipelines via Expanso Cloud
+
+1. Open [cloud.expanso.io](https://cloud.expanso.io)
+2. Navigate to your edge device
+3. Deploy pipelines one at a time:
+   - First: `01-capture.yaml` → Video appears
+   - Then: `02-detection.yaml` → Detection starts
+   - Then: `03-counting.yaml` → Scoreboard appears
+   - Finally: `04-alerts.yaml` → Confetti enabled
+
+### Step 3: Demo the Features
+
+- **Raise LEFT hand** → Green flash + giant left arrow
+- **Raise RIGHT hand** → Blue flash + giant right arrow
+- **Raise BOTH hands** → Purple flash + confetti (Stage 4)
+
+### Step 4: End the Demo
+Press `Ctrl+C` - all data is automatically cleared.
 
 ---
 
-### During the Demo
+## Local Debugging (Without Expanso Cloud)
 
-#### Step 1: Show Empty State
-> "This is our edge device running the Expanso agent. The dashboard is ready, but no pipelines are deployed yet."
-
-**Audience sees:** Empty video area with "Deploy a pipeline to begin"
-
----
-
-#### Step 2: Deploy Capture Pipeline
-> "Let's deploy our first pipeline - video capture."
-
-**Action:** In Expanso Cloud, deploy the capture pipeline
+For development and testing without Expanso Cloud:
 
 ```bash
-# Or simulate locally:
-curl -X POST http://localhost:8181/api/stage/1
+# Interactive debug menu
+./debug.sh
+
+# Or run specific components:
+./debug.sh dashboard    # Dashboard only
+./debug.sh full         # Full local pipeline
+./debug.sh stage 2      # Manually set stage
 ```
 
-**Audience sees:**
-- Video feed appears
-- Category counters show 0
-- "Stage: 1" badge in header
-
----
-
-#### Step 3: Deploy Detection Pipeline
-> "Now let's add ML-powered pose detection to recognize hand gestures."
-
-**Action:** Deploy the detection pipeline in Expanso Cloud
-
-```bash
-# Or simulate locally:
-curl -X POST http://localhost:8181/api/stage/2
-```
-
-**Audience sees:**
-- When you raise LEFT hand: **Giant green arrow flashes** + screen pulses green
-- When you raise RIGHT hand: **Giant blue arrow flashes** + screen pulses blue
-- When you raise BOTH hands: **Giant purple icon flashes** + screen pulses purple
-- Counters increment in real-time
-
-**Demo tip:** Stand back and raise hands dramatically. The indicators are visible from 20+ feet!
-
----
-
-#### Step 4: Deploy Counting Pipeline
-> "Let's add a scoreboard to track left vs right gestures."
-
-**Action:** Deploy the counting pipeline
-
-```bash
-# Or simulate locally:
-curl -X POST http://localhost:8181/api/stage/3
-```
-
-**Audience sees:**
-- **Stadium-style scoreboard** appears: `LEFT: 5  VS  RIGHT: 3`
-- Scores update live as you gesture
-
-**Demo tip:** Challenge audience members to a "gesture battle"!
-
----
-
-#### Step 5: Deploy Alerts Pipeline
-> "Finally, let's add celebration effects for special events."
-
-**Action:** Deploy the alerts pipeline
-
-```bash
-# Or simulate locally:
-curl -X POST http://localhost:8181/api/stage/4
-```
-
-**Audience sees:**
-- When BOTH hands raised: **Confetti explosion animation**
-
----
-
-### Ending the Demo
-
-Press `Ctrl+C` in the terminal running `./demo.sh`
-
-This automatically:
-- Stops all services
-- Clears all data
-- Resets for next demo
-
----
-
-## Hardware Requirements
-
-### Recommended: Raspberry Pi 5
-- Raspberry Pi 5 (4GB+ RAM)
-- USB webcam or Pi Camera
-- Network connection
-
-### Also Works On
-- Any Linux machine with webcam
-- macOS with webcam
-- Windows with WSL2
+This runs everything locally - useful for testing but **not for demos**.
 
 ---
 
@@ -159,12 +94,13 @@ This automatically:
 
 ```
 webcam-demo/
-├── demo.sh              # Start here! Runs the demo
-├── dashboard.py         # Web dashboard (auto-started)
-├── capture_video.py     # Video capture pipeline
-├── process_chunks.py    # ML detection pipeline
+├── demo.sh              # DEMO: Start here for demos
+├── debug.sh             # DEV: Local testing without Expanso
+├── dashboard.py         # Web dashboard UI
+├── capture_video.py     # Stage 1: Video capture
+├── process_chunks.py    # Stage 2: ML detection
 ├── db.py               # SQLite storage
-└── pipelines/          # Pipeline YAML configs
+└── pipelines/          # YAML configs for Expanso Cloud
     ├── 01-capture.yaml
     ├── 02-detection.yaml
     ├── 03-counting.yaml
@@ -173,39 +109,40 @@ webcam-demo/
 
 ---
 
+## Hardware Requirements
+
+**Recommended:** Raspberry Pi 5 (4GB+ RAM) with USB webcam
+
+Also works on: Linux, macOS, Windows (WSL2)
+
+---
+
 ## Troubleshooting
-
-### Dashboard won't start
-```bash
-# Check if port is in use
-ss -tlnp | grep 8181
-
-# Kill any existing processes
-pkill -f dashboard.py
-```
 
 ### Camera not found
 ```bash
-# List available cameras
 uv run -s capture_video.py --list-devices
+export VIDEO_DEVICE=/dev/video1  # Use correct device
+```
 
-# Set specific device
-export VIDEO_DEVICE=/dev/video1
+### Dashboard won't start
+```bash
+pkill -f dashboard.py
 ./demo.sh
 ```
 
-### No detections happening
-- Ensure good lighting
+### No detections
+- Good lighting required
 - Stand 3-6 feet from camera
-- Raise hand clearly above shoulder level
+- Raise hand clearly above shoulder
 
 ---
 
 ## Links
 
 - **Expanso Cloud:** https://cloud.expanso.io
+- **Documentation:** https://aronchick.github.io/webcam-demo/
 - **Expanso Docs:** https://docs.expanso.io
-- **This Repo:** https://github.com/aronchick/webcam-demo
 
 ---
 
