@@ -58,6 +58,12 @@ get_ip() {
     hostname -I 2>/dev/null | awk '{print $1}' || hostname
 }
 
+get_tailscale_dns() {
+    if command -v tailscale &> /dev/null; then
+        tailscale status --json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Self',{}).get('DNSName','').rstrip('.'))" 2>/dev/null
+    fi
+}
+
 clear_data() {
     echo -e "${YELLOW}Clearing data...${NC}"
     # Kill any processes that might be holding the database
@@ -78,12 +84,17 @@ clear_data() {
 
 start_dashboard() {
     local ip=$(get_ip)
+    local ts_dns=$(get_tailscale_dns)
     echo -e "${CYAN}[DASHBOARD]${NC} Starting on port 8181..."
     uv run -s dashboard.py &
     DASHBOARD_PID=$!
     sleep 2
     if kill -0 $DASHBOARD_PID 2>/dev/null; then
-        echo -e "${GREEN}[DASHBOARD]${NC} Running at ${BOLD}http://${ip}:8181${NC}"
+        echo -e "${GREEN}[DASHBOARD]${NC} Running at:"
+        echo -e "  Local:  ${BOLD}http://${ip}:8181${NC}"
+        if [[ -n "$ts_dns" ]]; then
+            echo -e "  Public: ${BOLD}https://${ts_dns}${NC}"
+        fi
     else
         echo -e "${RED}[DASHBOARD]${NC} Failed to start"
         exit 1
