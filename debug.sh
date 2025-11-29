@@ -179,6 +179,8 @@ interactive_mode() {
                 ;;
             6)
                 clear_data
+                start_dashboard
+                sleep 1
                 start_capture
                 sleep 2
                 start_detection
