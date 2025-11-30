@@ -117,6 +117,42 @@ Also works on: Linux, macOS, Windows (WSL2)
 
 ---
 
+## Stripping Down the Pi (Optional)
+
+For a clean demo Pi with minimal services, use the included script to disable unnecessary services:
+
+```bash
+# See what's running
+./strip-services.sh
+
+# Disable unnecessary services (printing, bluetooth, NFS, etc.)
+sudo ./strip-services.sh disable
+
+# Boot to CLI instead of desktop (saves ~200MB RAM)
+sudo ./strip-services.sh headless
+
+# Reboot to apply
+sudo reboot
+```
+
+**Services disabled:**
+- `cups`, `cups-browsed` - Printing
+- `bluetooth` - Bluetooth
+- `ModemManager` - Cellular modems
+- `nfs-blkmap`, `rpcbind` - NFS
+- `lightdm`, `accounts-daemon`, `colord`, `udisks2` - Desktop GUI
+
+**Services kept:**
+- `NetworkManager`, `wpa_supplicant` - Networking
+- `ssh` - Remote access
+- `tailscaled` - Tailscale VPN
+- `expanso-edge` - Expanso agent
+- `dbus`, `polkit`, `systemd-*` - Core system
+
+To restore: `sudo ./strip-services.sh restore`
+
+---
+
 ## Troubleshooting
 
 ### Camera not found

@@ -324,7 +324,12 @@ async def dashboard():
             border-radius: 16px;
             overflow: hidden;
         }
-        video { width: 100%; height: 100%; object-fit: contain; }
+        .video-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: opacity 0.1s;
+        }
 
         /* Empty state (Stage 0) */
         .empty-state {
@@ -342,22 +347,22 @@ async def dashboard():
         .empty-text { font-size: 1.5em; color: var(--text-muted); text-align: center; }
         .empty-subtext { font-size: 1em; color: var(--text-muted); opacity: 0.7; }
 
-        /* Giant Detection Indicator */
+        /* Giant Detection Indicator - BELOW video, not overlay */
         .detection-giant {
-            position: absolute;
-            inset: 0;
             display: none;
             align-items: center;
             justify-content: center;
-            pointer-events: none;
-            z-index: 10;
-            background: radial-gradient(circle, rgba(0,0,0,0.5) 0%, transparent 70%);
+            padding: 20px 0;
+            margin-top: 16px;
+            background: var(--bg-tertiary);
+            border-radius: 16px;
+            min-height: 180px;
         }
         .detection-giant.visible { display: flex; }
         .detection-giant svg {
-            width: 400px;
-            height: 400px;
-            filter: drop-shadow(0 0 80px currentColor) drop-shadow(0 0 40px currentColor);
+            width: 300px;
+            height: 160px;
+            filter: drop-shadow(0 0 40px currentColor) drop-shadow(0 0 20px currentColor);
             animation: detectPulse 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         @keyframes detectPulse {
@@ -370,8 +375,8 @@ async def dashboard():
             animation: detectPulse 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), glowPulse 1.5s ease-in-out infinite 0.5s;
         }
         @keyframes glowPulse {
-            0%, 100% { filter: drop-shadow(0 0 60px currentColor) drop-shadow(0 0 30px currentColor); }
-            50% { filter: drop-shadow(0 0 100px currentColor) drop-shadow(0 0 50px currentColor); }
+            0%, 100% { filter: drop-shadow(0 0 30px currentColor) drop-shadow(0 0 15px currentColor); }
+            50% { filter: drop-shadow(0 0 60px currentColor) drop-shadow(0 0 30px currentColor); }
         }
 
         /* Color flash overlay */
@@ -547,8 +552,20 @@ async def dashboard():
             background: var(--bg-tertiary);
             overflow: hidden;
             flex-shrink: 0;
+            position: relative;
         }
         .event-thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .event-thumb.loading::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
         .event-details { flex: 1; }
         .event-category { font-weight: 600; }
         .event-time { font-size: 0.8em; color: var(--text-muted); }
@@ -689,7 +706,9 @@ async def dashboard():
             <div class="main-layout">
                 <div class="video-section" id="video-section">
                     <div class="video-container" id="video-container">
-                        <video id="video-player" autoplay muted playsinline></video>
+                        <!-- Double-buffered video players for seamless playback -->
+                        <video id="video-player-a" autoplay muted playsinline style="position:absolute;inset:0;width:100%;height:100%;"></video>
+                        <video id="video-player-b" autoplay muted playsinline style="position:absolute;inset:0;width:100%;height:100%;opacity:0;"></video>
 
                         <!-- Empty state overlay -->
                         <div class="empty-state" id="empty-state">
@@ -700,11 +719,11 @@ async def dashboard():
 
                         <!-- Flash overlay for detections -->
                         <div class="flash-overlay" id="flash-overlay"></div>
+                    </div>
 
-                        <!-- Giant detection indicator -->
-                        <div class="detection-giant" id="detection-giant">
-                            <!-- SVG will be inserted here -->
-                        </div>
+                    <!-- Giant detection indicator - BELOW video -->
+                    <div class="detection-giant" id="detection-giant">
+                        <!-- SVG will be inserted here -->
                     </div>
 
                     <!-- Scoreboard (Stage 3+) -->
@@ -843,8 +862,16 @@ async def dashboard():
         let currentVideo = null;
         let currentStage = 0;
         let lastDetectionVideo = null;  // Track which video we last showed effects for
-        let videoEnded = false;
         let seenEvents = new Set();
+
+        // Video queue for simulating live stream (stays 2-3 behind real-time)
+        let videoQueue = [];
+        let playedVideos = new Set();
+        let isPlaying = false;
+
+        // Double-buffering: two video elements, swap between them
+        let activePlayer = 'a';
+        let nextVideoPreloaded = false;
 
         function switchTab(name) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -927,15 +954,17 @@ async def dashboard():
             }
         }
 
-        function updateStageUI(stage) {
+        function updateStageUI(stage, hasVideo) {
             currentStage = stage;
             document.getElementById('stage-num').textContent = stage;
 
             const stageBadge = document.getElementById('stage-badge');
             stageBadge.classList.toggle('active', stage > 0);
 
-            // Show/hide elements based on stage
-            document.getElementById('empty-state').classList.toggle('hidden', stage > 0);
+            // Only show empty state if stage is 0 AND no video is available
+            // Once we have video, never show empty state again
+            const showEmpty = (stage === 0) && !hasVideo && !currentVideo;
+            document.getElementById('empty-state').classList.toggle('hidden', !showEmpty);
             document.getElementById('scoreboard').classList.toggle('visible', stage >= 3);
         }
 
@@ -946,9 +975,9 @@ async def dashboard():
         }
 
         function updateDashboard(data) {
-            // Update stage
+            // Update stage - pass hasVideo to prevent empty state showing when we have video
             if (data.stage !== undefined) {
-                updateStageUI(data.stage);
+                updateStageUI(data.stage, !!data.latest_video);
             }
 
             // Update stats
@@ -1012,20 +1041,32 @@ async def dashboard():
                 }
             }
 
-            // Update video
-            if (data.latest_video && (data.latest_video.path !== currentVideo || videoEnded)) {
-                currentVideo = data.latest_video.path;
-                videoEnded = false;
-                const video = document.getElementById('video-player');
-                video.src = currentVideo;
-                video.load();
-                video.play().catch(() => {});
-
-                // Update perf display
-                if (data.latest_detection?.processing_time_ms) {
-                    document.getElementById('perf-time').textContent =
-                        Math.round(data.latest_detection.processing_time_ms);
+            // Build video queue from recent events (for continuous playback)
+            if (data.recent_events?.length > 0) {
+                data.recent_events.forEach(e => {
+                    const path = `/video/${e.category}/${e.filename}`;
+                    if (!playedVideos.has(path) && !videoQueue.find(v => v.path === path)) {
+                        videoQueue.push({ path, category: e.category });
+                    }
+                });
+                // Keep queue sorted by filename (oldest first for playback order)
+                videoQueue.sort((a, b) => a.path.localeCompare(b.path));
+                // Limit queue size
+                while (videoQueue.length > 10) {
+                    const removed = videoQueue.shift();
+                    playedVideos.add(removed.path);
                 }
+            }
+
+            // Start playing if not already
+            if (!isPlaying && videoQueue.length > 0) {
+                playNextVideo();
+            }
+
+            // Update perf display
+            if (data.latest_detection?.processing_time_ms) {
+                document.getElementById('perf-time').textContent =
+                    Math.round(data.latest_detection.processing_time_ms);
             }
 
             // Update event log
@@ -1039,10 +1080,11 @@ async def dashboard():
                     events.forEach(e => {
                         seenEvents.add(e.filename);
                         const color = COLORS[e.category];
+                        const hasThumb = !!e.thumb;
                         html += `
                             <div class="event-item" style="border-left-color: ${color}">
-                                <div class="event-thumb">
-                                    ${e.thumb ? `<img src="${e.thumb}">` : ''}
+                                <div class="event-thumb ${hasThumb ? '' : 'loading'}">
+                                    ${hasThumb ? `<img src="${e.thumb}" onload="this.parentElement.classList.remove('loading')">` : ''}
                                 </div>
                                 <div class="event-details">
                                     <div class="event-category" style="color: ${color}">${LABELS[e.category]}</div>
@@ -1057,12 +1099,13 @@ async def dashboard():
                     newEvents.reverse().forEach(e => {
                         seenEvents.add(e.filename);
                         const color = COLORS[e.category];
+                        const hasThumb = !!e.thumb;
                         const div = document.createElement('div');
                         div.className = 'event-item new';
                         div.style.borderLeftColor = color;
                         div.innerHTML = `
-                            <div class="event-thumb">
-                                ${e.thumb ? `<img src="${e.thumb}">` : ''}
+                            <div class="event-thumb ${hasThumb ? '' : 'loading'}">
+                                ${hasThumb ? `<img src="${e.thumb}" onload="this.parentElement.classList.remove('loading')">` : ''}
                             </div>
                             <div class="event-details">
                                 <div class="event-category" style="color: ${color}">${LABELS[e.category]}</div>
@@ -1081,9 +1124,84 @@ async def dashboard():
             }
         }
 
-        // Video end handler
-        document.getElementById('video-player').addEventListener('ended', () => {
-            videoEnded = true;
+        function getActiveVideo() {
+            return document.getElementById('video-player-' + activePlayer);
+        }
+
+        function getInactiveVideo() {
+            return document.getElementById('video-player-' + (activePlayer === 'a' ? 'b' : 'a'));
+        }
+
+        function preloadNextVideo() {
+            if (videoQueue.length === 0 || nextVideoPreloaded) return;
+
+            const next = videoQueue[0]; // Peek at next
+            const inactive = getInactiveVideo();
+
+            inactive.src = next.path;
+            inactive.load();
+            nextVideoPreloaded = true;
+        }
+
+        function playNextVideo() {
+            if (videoQueue.length === 0) {
+                isPlaying = false;
+                nextVideoPreloaded = false;
+                return;
+            }
+
+            isPlaying = true;
+            const next = videoQueue.shift();
+            playedVideos.add(next.path);
+            currentVideo = next.path;
+
+            const current = getActiveVideo();
+            const nextPlayer = getInactiveVideo();
+
+            // If we preloaded, the inactive player already has the video
+            if (nextVideoPreloaded) {
+                // Swap players instantly
+                current.style.opacity = '0';
+                nextPlayer.style.opacity = '1';
+                nextPlayer.play().catch(() => {});
+                activePlayer = activePlayer === 'a' ? 'b' : 'a';
+                nextVideoPreloaded = false;
+            } else {
+                // First video or fallback - load directly
+                current.src = next.path;
+                current.load();
+                current.play().catch(() => {
+                    setTimeout(playNextVideo, 100);
+                });
+            }
+
+            // Hide empty state
+            document.getElementById('empty-state').classList.add('hidden');
+
+            // Preload the next one
+            setTimeout(preloadNextVideo, 500);
+        }
+
+        // Set up event handlers for both video players
+        ['a', 'b'].forEach(id => {
+            const video = document.getElementById('video-player-' + id);
+
+            video.addEventListener('ended', () => {
+                if (video === getActiveVideo()) {
+                    playNextVideo();
+                }
+            });
+
+            video.addEventListener('error', () => {
+                if (video === getActiveVideo()) {
+                    setTimeout(playNextVideo, 100);
+                }
+            });
+
+            // When video can play, preload next
+            video.addEventListener('canplaythrough', () => {
+                preloadNextVideo();
+            });
         });
 
         function connect() {

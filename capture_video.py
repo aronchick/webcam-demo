@@ -12,7 +12,7 @@ Environment Variables:
     VIDEO_FORMAT: Input format (default: "avfoundation" on Mac, "v4l2" on Linux)
     OUTPUT_DIR: Directory for video chunks (default: "./chunks")
     CHUNK_DURATION: Duration of each chunk in seconds (default: 3)
-    VIDEO_SIZE: Resolution (default: "1280x720")
+    VIDEO_SIZE: Resolution (default: "640x360", downsampled 50% to save bandwidth)
     FRAMERATE: Frames per second (default: 30 for MacBook compatibility)
     DB_PATH: Path to SQLite database (default: "./pipeline.db")
 """
@@ -124,7 +124,7 @@ def main() -> int:
     device = os.environ.get("VIDEO_DEVICE", defaults["device"])
     output_dir = Path(os.environ.get("OUTPUT_DIR", "./chunks"))
     chunk_duration = int(os.environ.get("CHUNK_DURATION", "3"))
-    video_size = os.environ.get("VIDEO_SIZE", "1280x720")
+    video_size = os.environ.get("VIDEO_SIZE", "640x360")
     framerate = int(os.environ.get("FRAMERATE", "30"))  # MacBook cameras need 30fps
     db_path = Path(os.environ.get("DB_PATH", "./pipeline.db"))
 

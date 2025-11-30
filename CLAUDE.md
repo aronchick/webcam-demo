@@ -5,7 +5,7 @@
 This demo showcases **Expanso** for deploying intelligent data pipelines at the edge using a Raspberry Pi with webcam for real-time video processing and ML inference.
 
 **Key workflow:**
-1. Run `./demo.sh` to start services and clear data
+1. Run `./demo.py` to start services and clear data
 2. Deploy pipelines progressively via **Expanso Cloud** (cloud.expanso.io)
 3. Watch the dashboard update as each pipeline stage is deployed
 4. Press Ctrl+C to end demo (automatically clears data)
@@ -27,12 +27,11 @@ expanso-edge bootstrap --token YOUR_BOOTSTRAP_TOKEN
 ### 2. Run the Demo
 
 ```bash
-./demo.sh
+./demo.py
 ```
 
 This will:
 - Clear all historical data (chunks/, processed/)
-- Start the Expanso edge agent (if not running)
 - Start the web dashboard on port 8181
 - Clean up data when you press Ctrl+C
 
@@ -52,17 +51,22 @@ Open https://cloud.expanso.io and deploy pipelines progressively:
 ## Demo Script Usage
 
 ```bash
-./demo.sh          # Start demo (clears data, starts services)
-./demo.sh status   # Check if services are running
-./demo.sh help     # Show help
+./demo.py              # Start demo (dashboard only, deploy via Expanso Cloud)
+./demo.py --debug      # Debug mode: interactive menu for local testing
+./demo.py status       # Check if services are running
+./demo.py clear        # Clear all data
 ```
 
-**What the script does:**
+**Normal mode** (default):
 - Clears `chunks/` and `processed/` directories
-- Starts `expanso-edge` agent (if not already running)
-- Starts the web dashboard on port 8181 (displays the device's IP address)
+- Starts the web dashboard on port 8181
 - Monitors dashboard and restarts if it crashes
 - Clears all data on exit (Ctrl+C)
+
+**Debug mode** (`--debug`):
+- Interactive TUI with menu for local pipeline testing
+- Press 1-6 to start/stop individual services
+- Useful for testing without Expanso Cloud
 
 ---
 
@@ -85,7 +89,7 @@ Open https://cloud.expanso.io and deploy pipelines progressively:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      RASPBERRY PI (Edge Agent)                           │
 │                                                                          │
-│   expanso-edge              ./demo.sh                                    │
+│   expanso-edge              ./demo.py                                    │
 │   (receives pipelines)      (manages demo)                              │
 │                                                                          │
 │   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
@@ -105,7 +109,8 @@ Open https://cloud.expanso.io and deploy pipelines progressively:
 ```
 webcam-demo/
 ├── CLAUDE.md                    # This documentation
-├── demo.sh                      # Demo orchestration script
+├── demo.py                      # Demo script (normal + debug modes)
+├── demo.sh                      # Thin wrapper for ./demo.py
 │
 ├── # Core Processing Scripts (run by Expanso pipelines)
 ├── capture_video.py             # FFmpeg webcam capture (3s chunks)
@@ -255,7 +260,7 @@ expanso-edge bootstrap --token YOUR_TOKEN
 
 ### Dashboard Not Loading
 - Check port 8181 is free
-- Try `./demo.sh status`
+- Try `./demo.py status`
 - Check if uv is installed: `uv --version`
 
 ---
