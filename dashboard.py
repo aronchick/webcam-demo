@@ -15,11 +15,12 @@ Features progressive UI stages and giant visual indicators visible from 20 feet.
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse, JSONResponse, Response
 
 import db
 
@@ -132,30 +133,69 @@ def get_stats() -> dict:
 
 
 @app.get("/video/{category}/{filename}")
-async def serve_video(category: str, filename: str):
-    """Serve video files."""
+async def serve_video(category: str, filename: str, request: Request):
+    """Serve video files with caching."""
     video_path = PROCESSED_DIR / category / filename
-    if video_path.exists():
-        return FileResponse(video_path, media_type="video/mp4")
-    return {"error": "not found"}
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Generate ETag from file stats
+    stat = video_path.stat()
+    etag = f'"{stat.st_mtime}-{stat.st_size}"'
+
+    # Check If-None-Match for 304 response
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304)
+
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "ETag": etag,
+        }
+    )
 
 
 @app.get("/thumb/{filename}")
-async def serve_thumb(filename: str):
-    """Serve thumbnail images."""
+async def serve_thumb(filename: str, request: Request):
+    """Serve thumbnail images with caching."""
     thumb_path = PROCESSED_DIR / "thumbnails" / filename
-    if thumb_path.exists():
-        return FileResponse(thumb_path, media_type="image/jpeg")
-    return {"error": "not found"}
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+    # Generate ETag from file stats
+    stat = thumb_path.stat()
+    etag = f'"{stat.st_mtime}-{stat.st_size}"'
+
+    # Check If-None-Match for 304 response
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304)
+
+    return FileResponse(
+        thumb_path,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "public, max-age=86400",  # 24 hours for thumbnails
+            "ETag": etag,
+        }
+    )
 
 
 @app.post("/api/stage/{stage}")
-async def set_stage(stage: int):
-    """Set the current pipeline stage (called by pipelines on activation)."""
+async def set_stage(stage: int, source: str = "expanso"):
+    """Set the current pipeline stage (called by pipelines on activation).
+
+    Args:
+        stage: Pipeline stage 0-4
+        source: 'expanso' (from Expanso Cloud) or 'local' (from TUI debug mode)
+    """
     if stage < 0 or stage > 4:
         raise HTTPException(status_code=400, detail="Stage must be 0-4")
-    db.set_pipeline_stage(stage, DB_PATH)
-    return {"status": "ok", "stage": stage}
+    if source not in ("expanso", "local"):
+        source = "expanso"
+    db.set_pipeline_stage(stage, DB_PATH, source=source)
+    return {"status": "ok", "stage": stage, "source": source}
 
 
 @app.get("/api/stage")
@@ -194,20 +234,65 @@ async def get_pipeline(filename: str):
     return {"error": "not found"}
 
 
+def compute_delta(old_stats: dict, new_stats: dict) -> dict | None:
+    """Compute minimal delta between two stats objects."""
+    if old_stats is None:
+        return None  # Need full update
+
+    delta = {}
+    for key, value in new_stats.items():
+        old_value = old_stats.get(key)
+        if old_value != value:
+            # For nested dicts, check if they actually changed
+            if isinstance(value, dict) and isinstance(old_value, dict):
+                if json.dumps(value, default=str) != json.dumps(old_value, default=str):
+                    delta[key] = value
+            else:
+                delta[key] = value
+
+    return delta if delta else None
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket for real-time updates."""
+    """WebSocket for real-time updates with delta compression."""
     await websocket.accept()
 
     try:
         last_stats = None
+        message_count = 0
+        last_activity = time.time()
+
         while True:
             stats = get_stats()
-            stats_json = json.dumps(stats, default=str)
-            if stats_json != last_stats:
-                await websocket.send_json(stats)
-                last_stats = stats_json
-            await asyncio.sleep(0.3)  # Slightly faster updates
+
+            # Add server timestamp for latency measurement
+            stats["server_ts"] = int(time.time() * 1000)
+
+            # Every 10th message or first message: send full state
+            if message_count % 10 == 0 or last_stats is None:
+                await websocket.send_json({"type": "full", "data": stats})
+                last_stats = stats.copy()
+                last_activity = time.time()
+            else:
+                # Send delta only
+                delta = compute_delta(last_stats, stats)
+                if delta:
+                    await websocket.send_json({"type": "delta", "data": delta})
+                    last_stats = stats.copy()
+                    last_activity = time.time()
+
+            message_count += 1
+
+            # Adaptive polling: faster when active, slower when idle
+            idle_time = time.time() - last_activity
+            if idle_time < 5:
+                await asyncio.sleep(0.2)  # 200ms when active
+            elif idle_time < 30:
+                await asyncio.sleep(0.3)  # 300ms normal
+            else:
+                await asyncio.sleep(0.5)  # 500ms when idle
+
     except WebSocketDisconnect:
         pass
 
@@ -280,6 +365,78 @@ async def dashboard():
             font-weight: 700;
         }
         .stage-badge.active { border-color: var(--accent-green); }
+
+        /* Connection/Latency indicator */
+        .connection-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 0.85em;
+        }
+        .latency-bar {
+            width: 50px;
+            height: 6px;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .latency-fill {
+            height: 100%;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        .latency-fill.good { background: var(--accent-green); }
+        .latency-fill.fair { background: var(--accent-amber); }
+        .latency-fill.poor { background: #ef4444; }
+        .latency-value { font-family: monospace; min-width: 45px; }
+
+        /* Stage progress indicator */
+        .stage-progress {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 16px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+        .stage-step {
+            flex: 1;
+            padding: 12px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.75em;
+            color: var(--text-muted);
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+            border: 2px solid transparent;
+        }
+        .stage-step.active {
+            background: rgba(16,185,129,0.2);
+            border-color: var(--accent-green);
+            color: var(--text-primary);
+        }
+        .stage-step.completed {
+            background: rgba(16,185,129,0.1);
+            color: var(--accent-green);
+        }
+        .stage-step .step-num {
+            font-size: 1.5em;
+            font-weight: 900;
+            display: block;
+            margin-bottom: 4px;
+        }
+        .stage-step .step-label { font-weight: 600; }
+        .stage-step .step-source {
+            font-size: 0.85em;
+            margin-top: 4px;
+            opacity: 0.7;
+        }
         .status-badge {
             display: flex; align-items: center; gap: 8px;
             padding: 10px 20px;
@@ -328,8 +485,65 @@ async def dashboard():
             width: 100%;
             height: 100%;
             object-fit: contain;
-            transition: opacity 0.1s;
+            transition: opacity 0.1s ease-in-out;
+            background: #000;
         }
+        .video-container video.active { z-index: 2; }
+        .video-container video.preloading { z-index: 1; }
+
+        /* Buffering indicator overlay */
+        .buffer-overlay {
+            position: absolute;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.7);
+            z-index: 10;
+            gap: 16px;
+        }
+        .buffer-overlay.visible { display: flex; }
+        .buffer-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255,255,255,0.2);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .buffer-text { font-size: 1.1em; color: white; }
+
+        /* Buffer health indicator */
+        .buffer-health {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: rgba(0,0,0,0.6);
+            border-radius: 8px;
+            font-size: 0.75em;
+            z-index: 15;
+            color: white;
+        }
+        .buffer-bar {
+            width: 50px;
+            height: 6px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .buffer-fill {
+            height: 100%;
+            background: var(--accent-green);
+            transition: width 0.2s, background 0.2s;
+        }
+        .buffer-fill.warning { background: var(--accent-amber); }
+        .buffer-fill.danger { background: #ef4444; }
 
         /* Empty state (Stage 0) */
         .empty-state {
@@ -363,7 +577,7 @@ async def dashboard():
             width: 300px;
             height: 160px;
             filter: drop-shadow(0 0 40px currentColor) drop-shadow(0 0 20px currentColor);
-            animation: detectPulse 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            animation: detectPulse 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         @keyframes detectPulse {
             0% { transform: scale(0.3) rotate(-10deg); opacity: 0; }
@@ -372,7 +586,7 @@ async def dashboard():
         }
         /* Continuous glow animation while visible */
         .detection-giant.visible svg {
-            animation: detectPulse 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), glowPulse 1.5s ease-in-out infinite 0.5s;
+            animation: detectPulse 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), glowPulse 1.5s ease-in-out infinite 0.3s;
         }
         @keyframes glowPulse {
             0%, 100% { filter: drop-shadow(0 0 30px currentColor) drop-shadow(0 0 15px currentColor); }
@@ -389,7 +603,7 @@ async def dashboard():
             transition: opacity 0.15s;
         }
         .flash-overlay.flash {
-            animation: flashAnim 1s ease-out;
+            animation: flashAnim 0.6s ease-out;
         }
         @keyframes flashAnim {
             0% { opacity: 0.7; }
@@ -484,7 +698,7 @@ async def dashboard():
             border-radius: 20px;
             padding: 24px;
             text-align: center;
-            transition: all 0.3s;
+            transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
         }
         .cat-card.active {
             transform: scale(1.05);
@@ -541,7 +755,7 @@ async def dashboard():
             border-radius: 12px;
             border-left: 4px solid var(--border);
         }
-        .event-item.new { animation: slideIn 0.3s ease-out; }
+        .event-item.new { animation: slideIn 0.15s ease-out; }
         @keyframes slideIn {
             from { opacity: 0; transform: translateX(-20px); }
             to { opacity: 1; transform: translateX(0); }
@@ -684,6 +898,12 @@ async def dashboard():
                 </div>
             </div>
             <div class="header-right">
+                <div class="connection-indicator">
+                    <div class="latency-bar">
+                        <div class="latency-fill good" id="latency-fill"></div>
+                    </div>
+                    <span class="latency-value" id="latency-value">--ms</span>
+                </div>
                 <div class="stage-badge" id="stage-badge">Stage: <span id="stage-num">0</span></div>
                 <div class="status-badge">
                     <span class="status-dot" id="status-dot"></span>
@@ -703,6 +923,30 @@ async def dashboard():
 
         <!-- Dashboard Tab -->
         <div id="tab-dashboard" class="tab-content active">
+            <!-- Stage Progress Indicator -->
+            <div class="stage-progress" id="stage-progress">
+                <div class="stage-step" data-stage="1">
+                    <span class="step-num">1</span>
+                    <span class="step-label">Capture</span>
+                    <span class="step-source" id="stage1-source"></span>
+                </div>
+                <div class="stage-step" data-stage="2">
+                    <span class="step-num">2</span>
+                    <span class="step-label">Detection</span>
+                    <span class="step-source" id="stage2-source"></span>
+                </div>
+                <div class="stage-step" data-stage="3">
+                    <span class="step-num">3</span>
+                    <span class="step-label">Counting</span>
+                    <span class="step-source" id="stage3-source"></span>
+                </div>
+                <div class="stage-step" data-stage="4">
+                    <span class="step-num">4</span>
+                    <span class="step-label">Alerts</span>
+                    <span class="step-source" id="stage4-source"></span>
+                </div>
+            </div>
+
             <div class="main-layout">
                 <div class="video-section" id="video-section">
                     <div class="video-container" id="video-container">
@@ -719,6 +963,20 @@ async def dashboard():
 
                         <!-- Flash overlay for detections -->
                         <div class="flash-overlay" id="flash-overlay"></div>
+
+                        <!-- Buffering overlay -->
+                        <div class="buffer-overlay" id="buffer-overlay">
+                            <div class="buffer-spinner"></div>
+                            <div class="buffer-text">Buffering...</div>
+                        </div>
+
+                        <!-- Buffer health indicator -->
+                        <div class="buffer-health" id="buffer-health">
+                            <div class="buffer-bar">
+                                <div class="buffer-fill" id="buffer-fill"></div>
+                            </div>
+                            <span id="buffer-label">0/3</span>
+                        </div>
                     </div>
 
                     <!-- Giant detection indicator - BELOW video -->
@@ -736,6 +994,26 @@ async def dashboard():
                         <div class="score-side right">
                             <div class="score-label">Right Hand</div>
                             <div class="score-value" id="score-right">0</div>
+                        </div>
+                    </div>
+
+                    <!-- Real-time metrics row -->
+                    <div class="stats-row" style="margin-bottom: 12px;">
+                        <div class="stat-card">
+                            <div class="stat-label">Update Rate</div>
+                            <div class="stat-value" id="update-rate">--/s</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Latency</div>
+                            <div class="stat-value" id="latency-stat">--ms</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Buffer</div>
+                            <div class="stat-value" id="buffer-stat">0/3</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Queue</div>
+                            <div class="stat-value" id="queue-stat">0</div>
                         </div>
                     </div>
 
@@ -864,14 +1142,16 @@ async def dashboard():
         let lastDetectionVideo = null;  // Track which video we last showed effects for
         let seenEvents = new Set();
 
-        // Video queue for simulating live stream (stays 2-3 behind real-time)
+        // Video queue for simulating live stream
         let videoQueue = [];
         let playedVideos = new Set();
         let isPlaying = false;
 
-        // Double-buffering: two video elements, swap between them
+        // Multi-video preload buffer (3 videos ahead for zero-gap playback)
+        const PRELOAD_BUFFER_SIZE = 3;
+        let preloadBuffer = [];  // Array of {path, element, ready, category}
         let activePlayer = 'a';
-        let nextVideoPreloaded = false;
+        let bufferCheckInterval = null;
 
         function switchTab(name) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -954,12 +1234,31 @@ async def dashboard():
             }
         }
 
-        function updateStageUI(stage, hasVideo) {
+        function updateStageUI(stage, hasVideo, stageSource) {
             currentStage = stage;
             document.getElementById('stage-num').textContent = stage;
 
             const stageBadge = document.getElementById('stage-badge');
             stageBadge.classList.toggle('active', stage > 0);
+
+            // Update stage progress indicator
+            document.querySelectorAll('.stage-step').forEach(step => {
+                const stepStage = parseInt(step.dataset.stage);
+                step.classList.remove('active', 'completed');
+                if (stepStage < stage) {
+                    step.classList.add('completed');
+                } else if (stepStage === stage) {
+                    step.classList.add('active');
+                }
+            });
+
+            // Show source info (expanso or local TUI)
+            if (stageSource) {
+                const sourceEl = document.getElementById(`stage${stage}-source`);
+                if (sourceEl) {
+                    sourceEl.textContent = stageSource === 'expanso' ? '(Expanso)' : '(Local)';
+                }
+            }
 
             // Only show empty state if stage is 0 AND no video is available
             // Once we have video, never show empty state again
@@ -977,7 +1276,7 @@ async def dashboard():
         function updateDashboard(data) {
             // Update stage - pass hasVideo to prevent empty state showing when we have video
             if (data.stage !== undefined) {
-                updateStageUI(data.stage, !!data.latest_video);
+                updateStageUI(data.stage, !!data.latest_video, data.stage_source);
             }
 
             // Update stats
@@ -1132,77 +1431,288 @@ async def dashboard():
             return document.getElementById('video-player-' + (activePlayer === 'a' ? 'b' : 'a'));
         }
 
-        function preloadNextVideo() {
-            if (videoQueue.length === 0 || nextVideoPreloaded) return;
+        // Buffer health UI
+        function updateBufferUI() {
+            const readyCount = preloadBuffer.filter(b => b.ready).length;
+            const fill = document.getElementById('buffer-fill');
+            const label = document.getElementById('buffer-label');
 
-            const next = videoQueue[0]; // Peek at next
-            const inactive = getInactiveVideo();
+            const pct = (readyCount / PRELOAD_BUFFER_SIZE) * 100;
+            fill.style.width = pct + '%';
+            label.textContent = readyCount + '/' + PRELOAD_BUFFER_SIZE;
 
-            inactive.src = next.path;
-            inactive.load();
-            nextVideoPreloaded = true;
+            fill.classList.remove('warning', 'danger');
+            if (readyCount === 0) fill.classList.add('danger');
+            else if (readyCount < 2) fill.classList.add('warning');
+        }
+
+        function showBuffering() {
+            document.getElementById('buffer-overlay').classList.add('visible');
+        }
+
+        function hideBuffering() {
+            document.getElementById('buffer-overlay').classList.remove('visible');
+        }
+
+        // Fill preload buffer with upcoming videos
+        function fillPreloadBuffer() {
+            // Clean up any entries that are no longer needed
+            while (preloadBuffer.length > 0 && playedVideos.has(preloadBuffer[0].path)) {
+                const old = preloadBuffer.shift();
+                if (old.element && old.element.parentNode) {
+                    old.element.parentNode.removeChild(old.element);
+                }
+            }
+
+            // Fill buffer up to PRELOAD_BUFFER_SIZE
+            let bufferIdx = 0;
+            for (let i = 0; i < videoQueue.length && preloadBuffer.length < PRELOAD_BUFFER_SIZE; i++) {
+                const videoInfo = videoQueue[i];
+
+                // Skip if already in buffer
+                if (preloadBuffer.find(b => b.path === videoInfo.path)) continue;
+                // Skip if already played
+                if (playedVideos.has(videoInfo.path)) continue;
+
+                // Create hidden video element for preloading
+                const video = document.createElement('video');
+                video.preload = 'auto';
+                video.muted = true;
+                video.playsInline = true;
+                video.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;opacity:0;z-index:0;';
+                document.getElementById('video-container').appendChild(video);
+
+                const entry = {
+                    path: videoInfo.path,
+                    element: video,
+                    ready: false,
+                    category: videoInfo.category
+                };
+                preloadBuffer.push(entry);
+
+                video.src = videoInfo.path;
+                video.load();
+
+                video.addEventListener('canplaythrough', () => {
+                    entry.ready = true;
+                    updateBufferUI();
+                    // If we're waiting to play and this is the next video, play it
+                    if (isPlaying && preloadBuffer[0] === entry && entry.ready) {
+                        hideBuffering();
+                    }
+                }, { once: true });
+
+                video.addEventListener('error', () => {
+                    // Mark as ready to skip it
+                    entry.ready = true;
+                    entry.error = true;
+                    updateBufferUI();
+                }, { once: true });
+            }
+
+            updateBufferUI();
         }
 
         function playNextVideo() {
-            if (videoQueue.length === 0) {
+            if (videoQueue.length === 0 && preloadBuffer.length === 0) {
                 isPlaying = false;
-                nextVideoPreloaded = false;
                 return;
             }
 
             isPlaying = true;
-            const next = videoQueue.shift();
-            playedVideos.add(next.path);
-            currentVideo = next.path;
-
-            const current = getActiveVideo();
-            const nextPlayer = getInactiveVideo();
-
-            // If we preloaded, the inactive player already has the video
-            if (nextVideoPreloaded) {
-                // Swap players instantly
-                current.style.opacity = '0';
-                nextPlayer.style.opacity = '1';
-                nextPlayer.play().catch(() => {});
-                activePlayer = activePlayer === 'a' ? 'b' : 'a';
-                nextVideoPreloaded = false;
-            } else {
-                // First video or fallback - load directly
-                current.src = next.path;
-                current.load();
-                current.play().catch(() => {
-                    setTimeout(playNextVideo, 100);
-                });
-            }
-
-            // Hide empty state
             document.getElementById('empty-state').classList.add('hidden');
 
-            // Preload the next one
-            setTimeout(preloadNextVideo, 500);
+            // Get next video from buffer
+            let nextEntry = preloadBuffer[0];
+
+            // If buffer is empty but queue has items, we need to wait
+            if (!nextEntry && videoQueue.length > 0) {
+                fillPreloadBuffer();
+                nextEntry = preloadBuffer[0];
+            }
+
+            if (!nextEntry) {
+                isPlaying = false;
+                return;
+            }
+
+            // If not ready yet, show buffering and wait
+            if (!nextEntry.ready) {
+                showBuffering();
+                // Freeze current video on last frame instead of going black
+                const current = getActiveVideo();
+                if (current.duration > 0) {
+                    current.currentTime = current.duration - 0.05;
+                    current.pause();
+                }
+                return; // Will be called again when video is ready
+            }
+
+            hideBuffering();
+
+            // Skip errored entries
+            if (nextEntry.error) {
+                preloadBuffer.shift();
+                if (nextEntry.element && nextEntry.element.parentNode) {
+                    nextEntry.element.parentNode.removeChild(nextEntry.element);
+                }
+                playNextVideo();
+                return;
+            }
+
+            // Remove from queue and buffer
+            const videoPath = nextEntry.path;
+            videoQueue = videoQueue.filter(v => v.path !== videoPath);
+            preloadBuffer.shift();
+            playedVideos.add(videoPath);
+            currentVideo = videoPath;
+
+            const current = getActiveVideo();
+            const nextVideo = nextEntry.element;
+
+            // Crossfade: show next, hide current
+            nextVideo.style.opacity = '1';
+            nextVideo.style.zIndex = '2';
+            current.style.opacity = '0';
+            current.style.zIndex = '1';
+
+            // Start playback
+            nextVideo.play().then(() => {
+                // Clean up old video element after transition
+                setTimeout(() => {
+                    if (current.id.includes('player')) {
+                        current.src = '';
+                        current.load();
+                    }
+                }, 200);
+            }).catch(() => {
+                // Playback failed, try next
+                if (nextVideo.parentNode) nextVideo.parentNode.removeChild(nextVideo);
+                playNextVideo();
+            });
+
+            // Make this the active player
+            nextVideo.id = 'video-player-' + (activePlayer === 'a' ? 'b' : 'a');
+            activePlayer = activePlayer === 'a' ? 'b' : 'a';
+
+            // Set up ended handler for new active video
+            nextVideo.addEventListener('ended', () => {
+                if (nextVideo.parentNode) nextVideo.parentNode.removeChild(nextVideo);
+                playNextVideo();
+            }, { once: true });
+
+            // Refill buffer
+            fillPreloadBuffer();
         }
 
-        // Set up event handlers for both video players
+        // Set up event handlers for initial video players
         ['a', 'b'].forEach(id => {
             const video = document.getElementById('video-player-' + id);
 
             video.addEventListener('ended', () => {
-                if (video === getActiveVideo()) {
-                    playNextVideo();
-                }
+                playNextVideo();
             });
 
             video.addEventListener('error', () => {
-                if (video === getActiveVideo()) {
-                    setTimeout(playNextVideo, 100);
-                }
-            });
-
-            // When video can play, preload next
-            video.addEventListener('canplaythrough', () => {
-                preloadNextVideo();
+                setTimeout(playNextVideo, 100);
             });
         });
+
+        // Periodically check buffer and refill
+        setInterval(() => {
+            if (videoQueue.length > 0) {
+                fillPreloadBuffer();
+            }
+        }, 500);
+
+        // State for delta updates
+        let lastKnownState = {};
+
+        // Metrics tracking
+        const metrics = {
+            networkLatency: 0,
+            latencyHistory: [],
+            messagesReceived: 0,
+            lastMessageTime: Date.now(),
+            updateRate: 0,
+        };
+
+        function updateMetricsDisplay() {
+            // Update latency displays (header and stats row)
+            const latencyEl = document.getElementById('latency-value');
+            const latencyStat = document.getElementById('latency-stat');
+            const latencyText = metrics.networkLatency + 'ms';
+            if (latencyEl) latencyEl.textContent = latencyText;
+            if (latencyStat) latencyStat.textContent = latencyText;
+
+            // Update latency bar
+            const latencyFill = document.getElementById('latency-fill');
+            if (latencyFill) {
+                latencyFill.classList.remove('good', 'fair', 'poor');
+                if (metrics.networkLatency < 100) {
+                    latencyFill.classList.add('good');
+                } else if (metrics.networkLatency < 300) {
+                    latencyFill.classList.add('fair');
+                } else {
+                    latencyFill.classList.add('poor');
+                }
+            }
+
+            // Update rate display
+            const rateEl = document.getElementById('update-rate');
+            if (rateEl) {
+                rateEl.textContent = metrics.updateRate.toFixed(1) + '/s';
+            }
+
+            // Sync buffer stat with buffer UI
+            const bufferStat = document.getElementById('buffer-stat');
+            const bufferLabel = document.getElementById('buffer-label');
+            if (bufferStat && bufferLabel) {
+                bufferStat.textContent = bufferLabel.textContent;
+            }
+
+            // Update queue stat
+            const queueStat = document.getElementById('queue-stat');
+            if (queueStat) {
+                queueStat.textContent = videoQueue.length;
+            }
+        }
+
+        function handleMessage(msg) {
+            const now = Date.now();
+
+            // Track metrics
+            metrics.messagesReceived++;
+            const timeSinceLastMsg = now - metrics.lastMessageTime;
+            metrics.lastMessageTime = now;
+
+            // Calculate update rate (rolling average)
+            if (timeSinceLastMsg > 0 && timeSinceLastMsg < 5000) {
+                metrics.updateRate = metrics.updateRate * 0.8 + (1000 / timeSinceLastMsg) * 0.2;
+            }
+
+            // Handle full or delta message
+            if (msg.type === 'full') {
+                lastKnownState = msg.data;
+            } else if (msg.type === 'delta') {
+                // Merge delta into last known state
+                lastKnownState = {...lastKnownState, ...msg.data};
+            } else {
+                // Legacy format (direct stats object)
+                lastKnownState = msg;
+            }
+
+            // Calculate network latency from server timestamp
+            if (lastKnownState.server_ts) {
+                metrics.networkLatency = Math.max(0, now - lastKnownState.server_ts);
+                metrics.latencyHistory.push(metrics.networkLatency);
+                if (metrics.latencyHistory.length > 20) metrics.latencyHistory.shift();
+            }
+
+            // Update dashboard with merged state
+            updateDashboard(lastKnownState);
+            updateMetricsDisplay();
+        }
 
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1221,7 +1731,7 @@ async def dashboard():
                 setTimeout(connect, 2000);
             };
 
-            ws.onmessage = (e) => updateDashboard(JSON.parse(e.data));
+            ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
         }
 
         connect();

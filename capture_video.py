@@ -101,7 +101,8 @@ def build_ffmpeg_command(
         # Output framerate (downsample from camera rate)
         "-r", str(framerate),
         "-c:v", "libx264",
-        "-preset", "ultrafast",
+        "-preset", "veryfast",  # Better compression than ultrafast
+        "-crf", "23",  # Quality factor (18-28 typical, lower = better quality)
         "-tune", "zerolatency",
         "-pix_fmt", "yuv420p",
         # Force keyframe at segment boundaries for clean cuts
@@ -124,14 +125,16 @@ def main() -> int:
     device = os.environ.get("VIDEO_DEVICE", defaults["device"])
     output_dir = Path(os.environ.get("OUTPUT_DIR", "./chunks"))
     chunk_duration = int(os.environ.get("CHUNK_DURATION", "3"))
-    video_size = os.environ.get("VIDEO_SIZE", "640x360")
-    framerate = int(os.environ.get("FRAMERATE", "30"))  # MacBook cameras need 30fps
+    video_size = os.environ.get("VIDEO_SIZE", "480x270")  # Reduced for bandwidth (was 640x360)
+    framerate = int(os.environ.get("FRAMERATE", "24"))  # Reduced for bandwidth (was 30)
     db_path = Path(os.environ.get("DB_PATH", "./pipeline.db"))
 
     # Set pipeline stage to 1 (capture active)
+    # Check if EXPANSO_PIPELINE env var is set to determine source
+    source = "expanso" if os.environ.get("EXPANSO_PIPELINE") else "local"
     if HAS_DB:
         db.init_db(db_path)
-        db.set_pipeline_stage(1, db_path)
+        db.set_pipeline_stage(1, db_path, source=source)
         db.start_session(db_path)
 
     # Handle --list-devices flag

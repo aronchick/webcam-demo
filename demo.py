@@ -308,15 +308,25 @@ def run_app(debug_mode: bool, port: int) -> None:
         #menu { height: 3; border: round cyan; padding: 0 1; }
         """
 
-        BINDINGS = [Binding("q", "quit", "Quit")]
 
-        def __init__(self):
+        BINDINGS = [
+            Binding("q", "quit", "Quit"),
+            Binding("1", "cmd_1", "Dashboard", show=False),
+            Binding("2", "cmd_2", "Capture", show=False),
+            Binding("3", "cmd_3", "Detection", show=False),
+            Binding("5", "cmd_5", "Clear", show=False),
+            Binding("6", "cmd_6", "Full", show=False),
+        ]
+
+        def __init__(self, debug_mode: bool, port: int):
             debug("DemoApp.__init__")
             super().__init__()
             self.pm = ProcessManager()
             self.local_ip = get_local_ip()
             self.tailscale_host = get_tailscale_hostname()
             self._mode = "Starting"
+            self._debug_mode = debug_mode
+            self._port = port
             debug(f"  local_ip={self.local_ip}, tailscale_host={self.tailscale_host}")
 
         def compose(self) -> ComposeResult:
@@ -328,15 +338,7 @@ def run_app(debug_mode: bool, port: int) -> None:
 
         def on_mount(self) -> None:
             debug("DemoApp.on_mount START")
-            self.title = "DEBUG" if debug_mode else "DEMO"
-
-            # Set up bindings for debug mode
-            if debug_mode:
-                self.bind("1", "cmd_1")
-                self.bind("2", "cmd_2")
-                self.bind("3", "cmd_3")
-                self.bind("5", "cmd_5")
-                self.bind("6", "cmd_6")
+            self.title = "DEBUG" if self._debug_mode else "DEMO"
 
             self._update_menu()
             debug("  menu updated")
@@ -350,7 +352,7 @@ def run_app(debug_mode: bool, port: int) -> None:
             self._do_start_dashboard()
             debug("  dashboard started")
 
-            if not debug_mode:
+            if not self._debug_mode:
                 if check_expanso_agent():
                     self.log_msg("Expanso agent: RUNNING")
                 else:
@@ -379,10 +381,10 @@ def run_app(debug_mode: bool, port: int) -> None:
                 d = "●" if self.pm.is_running("dashboard") else "○"
                 c = "●" if self.pm.is_running("capture") else "○"
                 t = "●" if self.pm.is_running("detection") else "○"
-                local_url = f"http://{self.local_ip}:{port}"
-                ts_url = f"http://{self.tailscale_host}:{port}" if self.tailscale_host else ""
+                local_url = f"http://{self.local_ip}:{self._port}"
+                ts_url = f"http://{self.tailscale_host}:{self._port}" if self.tailscale_host else ""
 
-                if debug_mode:
+                if self._debug_mode:
                     status.update(f"[b]{self._mode}[/b] | D:{d} C:{c} T:{t} | {local_url}" + (f" | {ts_url}" if ts_url else ""))
                 else:
                     status.update(f"Dashboard:{d} | {local_url}" + (f" | {ts_url}" if ts_url else ""))
@@ -392,7 +394,7 @@ def run_app(debug_mode: bool, port: int) -> None:
         def _update_menu(self) -> None:
             try:
                 menu = self.query_one("#menu", Static)
-                if debug_mode:
+                if self._debug_mode:
                     menu.update("[b]1[/]=Dashboard [b]2[/]=Capture [b]3[/]=Detection [b]5[/]=Clear [b]6[/]=Full [b]q[/]=Quit")
                 else:
                     menu.update("[b]q[/]=Quit | Deploy at https://cloud.expanso.io")
@@ -409,7 +411,7 @@ def run_app(debug_mode: bool, port: int) -> None:
         def _do_start_dashboard(self) -> None:
             self._do_start("dashboard", ["uv", "run", "-s", "dashboard.py"])
             if self.pm.is_running("dashboard"):
-                self.log_msg(f"Dashboard at http://{self.local_ip}:{port}")
+                self.log_msg(f"Dashboard at http://{self.local_ip}:{self._port}")
 
         def _do_start_capture(self) -> None:
             self._do_start("capture", ["uv", "run", "-s", "capture_video.py"])
@@ -436,23 +438,31 @@ def run_app(debug_mode: bool, port: int) -> None:
 
             threading.Thread(target=thread_fn, daemon=True).start()
 
-        # Actions
+        # Actions (only work in debug mode)
         def action_cmd_1(self) -> None:
+            if not self._debug_mode:
+                return
             debug("action_cmd_1")
             self._mode = "Dashboard"
             self._do_start_dashboard()
 
         def action_cmd_2(self) -> None:
+            if not self._debug_mode:
+                return
             debug("action_cmd_2")
             self._mode = "Capture"
             self._do_start_capture()
 
         def action_cmd_3(self) -> None:
+            if not self._debug_mode:
+                return
             debug("action_cmd_3")
             self._mode = "Detection"
             self._do_start_detection()
 
         def action_cmd_5(self) -> None:
+            if not self._debug_mode:
+                return
             debug("action_cmd_5")
             self._mode = "Cleared"
             self.pm.kill_all()
@@ -461,6 +471,8 @@ def run_app(debug_mode: bool, port: int) -> None:
             self._do_start_dashboard()
 
         def action_cmd_6(self) -> None:
+            if not self._debug_mode:
+                return
             debug("action_cmd_6")
             self._mode = "Full Pipeline"
             self.pm.kill_all()
@@ -477,9 +489,10 @@ def run_app(debug_mode: bool, port: int) -> None:
             self.exit()
 
     debug("Creating DemoApp instance")
-    app = DemoApp()
+    app = DemoApp(debug_mode=debug_mode, port=port)
     debug("Calling app.run()")
-    app.run()
+    # Disable mouse capture so users can select/copy text in terminal (e.g., URLs)
+    app.run(mouse=False)
     debug("app.run() returned")
 
 

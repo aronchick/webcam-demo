@@ -237,9 +237,11 @@ def main() -> int:
     db_path = Path(os.environ.get("DB_PATH", "./pipeline.db"))
 
     # Initialize database
+    # Check if EXPANSO_PIPELINE env var is set to determine source
+    source = "expanso" if os.environ.get("EXPANSO_PIPELINE") else "local"
     db.init_db(db_path)
     db.start_session(db_path)
-    db.set_pipeline_stage(2, db_path)  # Stage 2 = detection active
+    db.set_pipeline_stage(2, db_path, source=source)  # Stage 2 = detection active
 
     # Create output directories
     folders = [

@@ -142,13 +142,17 @@ def record_detection(
         return detection_id
 
 
-def set_pipeline_stage(stage: int, db_path: Path = DEFAULT_DB_PATH) -> None:
-    """Set the current pipeline stage (1-4)."""
+def set_pipeline_stage(stage: int, db_path: Path = DEFAULT_DB_PATH, source: str = "local") -> None:
+    """Set the current pipeline stage (1-4). Source is 'expanso' or 'local'."""
     with get_db(db_path) as conn:
         conn.execute("""
             INSERT OR REPLACE INTO pipeline_state (key, value, updated_at)
             VALUES ('current_stage', ?, CURRENT_TIMESTAMP)
         """, (str(stage),))
+        conn.execute("""
+            INSERT OR REPLACE INTO pipeline_state (key, value, updated_at)
+            VALUES ('stage_source', ?, CURRENT_TIMESTAMP)
+        """, (source,))
 
 
 def get_pipeline_stage(db_path: Path = DEFAULT_DB_PATH) -> int:
@@ -158,6 +162,15 @@ def get_pipeline_stage(db_path: Path = DEFAULT_DB_PATH) -> int:
             SELECT value FROM pipeline_state WHERE key = 'current_stage'
         """).fetchone()
         return int(row["value"]) if row else 0
+
+
+def get_stage_source(db_path: Path = DEFAULT_DB_PATH) -> str:
+    """Get the source of the current stage ('expanso' or 'local')."""
+    with get_db(db_path) as conn:
+        row = conn.execute("""
+            SELECT value FROM pipeline_state WHERE key = 'stage_source'
+        """).fetchone()
+        return row["value"] if row else "local"
 
 
 def get_counts(db_path: Path = DEFAULT_DB_PATH) -> dict:
@@ -208,6 +221,7 @@ def get_full_stats(db_path: Path = DEFAULT_DB_PATH) -> dict:
     """Get comprehensive stats for dashboard."""
     return {
         "stage": get_pipeline_stage(db_path),
+        "stage_source": get_stage_source(db_path),
         "counts": get_counts(db_path),
         "session": get_session_stats(db_path),
         "latest": get_latest_detection(db_path),
