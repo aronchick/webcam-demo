@@ -77,12 +77,6 @@ class MotionClassifier:
         """Create a cool visualization showing motion areas."""
         vis = frame.copy()
 
-        # Create colored motion overlay (cyan/magenta gradient based on intensity)
-        motion_color = np.zeros_like(frame)
-
-        # Use motion mask to create heat-like effect
-        motion_mask_3ch = cv2.cvtColor(motion_mask, cv2.COLOR_GRAY2BGR)
-
         # Color based on motion intensity
         if motion_percent > 15:
             color = (0, 0, 255)  # Red for high motion
@@ -189,9 +183,9 @@ class MotionClassifier:
             vis = self.create_motion_visualization(
                 best_frame, best_motion_mask, best_motion_percent
             )
-            thumb = cv2.resize(vis, (320, 180))
+            thumb = cv2.resize(vis, (160, 120))
             thumb_path = thumbs_dir / f"{video_path.stem}.jpg"
-            cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 50])
         elif thumbs_dir and best_frame is None:
             # No motion detected - save middle frame
             cap = cv2.VideoCapture(str(video_path))
@@ -200,9 +194,9 @@ class MotionClassifier:
             cap.release()
             if ret:
                 thumbs_dir.mkdir(parents=True, exist_ok=True)
-                thumb = cv2.resize(frame, (320, 180))
+                thumb = cv2.resize(frame, (160, 120))
                 thumb_path = thumbs_dir / f"{video_path.stem}.jpg"
-                cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 50])
 
         return classification, thumb_path
 
@@ -286,7 +280,7 @@ Watching for new chunks... (Ctrl+C to stop)
                 # Move to appropriate folder
                 if not video_path.exists():
                     processed_files.add(video_path.name)
-                    print(f"  Skipped (file no longer exists)")
+                    print("  Skipped (file no longer exists)")
                     continue
 
                 dest = output_dir / classification / video_path.name

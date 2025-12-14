@@ -33,6 +33,15 @@ except ImportError:
     HAS_DB = False
 
 
+def is_raspberry_pi() -> bool:
+    """Detect if running on a Raspberry Pi."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            return "Raspberry Pi" in f.read() or "BCM" in f.read()
+    except Exception:
+        return False
+
+
 def get_platform_defaults() -> dict:
     """Return platform-specific defaults for video capture."""
     system = platform.system()
@@ -40,11 +49,23 @@ def get_platform_defaults() -> dict:
         return {
             "format": "avfoundation",
             "device": "0",
+            "video_size": "1280x720",
+            "framerate": 30,
         }
     elif system == "Linux":
+        # Use absolute minimum on Pi to prevent overload
+        if is_raspberry_pi():
+            return {
+                "format": "v4l2",
+                "device": "/dev/video0",
+                "video_size": "320x240",
+                "framerate": 10,
+            }
         return {
             "format": "v4l2",
             "device": "/dev/video0",
+            "video_size": "640x480",
+            "framerate": 15,
         }
     else:
         raise RuntimeError(f"Unsupported platform: {system}")
@@ -64,6 +85,18 @@ def list_devices() -> None:
         print(f"Device listing not supported on {system}")
 
 
+def has_hw_encoder() -> bool:
+    """Check if Pi hardware encoder is available."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-encoders"],
+            capture_output=True, text=True, timeout=5
+        )
+        return "h264_v4l2m2m" in result.stdout
+    except Exception:
+        return False
+
+
 def build_ffmpeg_command(
     video_format: str,
     device: str,
@@ -81,7 +114,6 @@ def build_ffmpeg_command(
     # Platform-specific input options
     if platform.system() == "Darwin":
         # macOS: explicitly set framerate to avoid unsupported default
-        # Most MacBook cameras support 15 or 30 fps
         cmd.extend([
             "-f", video_format,
             "-framerate", str(framerate),
@@ -97,15 +129,28 @@ def build_ffmpeg_command(
             "-i", device,
         ])
 
+    # Use hardware encoder on Pi, software on Mac/other
+    use_hw = platform.system() == "Linux" and has_hw_encoder()
+
+    if use_hw:
+        # Raspberry Pi hardware H.264 encoder - much lower CPU usage
+        # 200kbps is plenty for 320x240@10fps
+        cmd.extend([
+            "-c:v", "h264_v4l2m2m",
+            "-pix_fmt", "yuv420p",
+            "-b:v", "200k",
+        ])
+    else:
+        # Software encoder for Mac/other
+        cmd.extend([
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p",
+        ])
+
     cmd.extend([
-        # Output framerate (downsample from camera rate)
         "-r", str(framerate),
-        "-c:v", "libx264",
-        "-preset", "veryfast",  # Better compression than ultrafast
-        "-crf", "23",  # Quality factor (18-28 typical, lower = better quality)
-        "-tune", "zerolatency",
-        "-pix_fmt", "yuv420p",
-        # Force keyframe at segment boundaries for clean cuts
         "-g", str(framerate * chunk_duration),
         "-force_key_frames", f"expr:gte(t,n_forced*{chunk_duration})",
         "-f", "segment",
@@ -120,13 +165,13 @@ def build_ffmpeg_command(
 def main() -> int:
     defaults = get_platform_defaults()
 
-    # Configuration from environment variables
+    # Configuration from environment variables (with platform-aware defaults)
     video_format = os.environ.get("VIDEO_FORMAT", defaults["format"])
     device = os.environ.get("VIDEO_DEVICE", defaults["device"])
     output_dir = Path(os.environ.get("OUTPUT_DIR", "./chunks"))
     chunk_duration = int(os.environ.get("CHUNK_DURATION", "3"))
-    video_size = os.environ.get("VIDEO_SIZE", "480x270")  # Reduced for bandwidth (was 640x360)
-    framerate = int(os.environ.get("FRAMERATE", "24"))  # Reduced for bandwidth (was 30)
+    video_size = os.environ.get("VIDEO_SIZE", defaults.get("video_size", "1280x720"))
+    framerate = int(os.environ.get("FRAMERATE", str(defaults.get("framerate", 30))))
     db_path = Path(os.environ.get("DB_PATH", "./pipeline.db"))
 
     # Set pipeline stage to 1 (capture active)
@@ -152,6 +197,10 @@ def main() -> int:
         video_format, device, output_dir, chunk_duration, video_size, framerate
     )
 
+    # Detect encoder type for status display
+    use_hw = platform.system() == "Linux" and has_hw_encoder()
+    encoder = "h264_v4l2m2m (hardware)" if use_hw else "libx264 (software)"
+
     print(f"""
 Starting video capture:
   Platform: {platform.system()}
@@ -161,6 +210,7 @@ Starting video capture:
   Chunk duration: {chunk_duration}s
   Resolution: {video_size}
   Framerate: {framerate} fps
+  Encoder: {encoder}
 
 Press Ctrl+C to stop...
 """, flush=True)

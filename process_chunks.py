@@ -193,9 +193,9 @@ class PoseClassifier:
         if thumbs_dir and best_annotated is not None:
             thumbs_dir.mkdir(parents=True, exist_ok=True)
             thumb_path = thumbs_dir / f"{video_path.stem}.jpg"
-            # Resize for thumbnail
-            thumb = cv2.resize(best_annotated, (320, 180))
-            cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Tiny thumbnail to minimize serving size
+            thumb = cv2.resize(best_annotated, (160, 120))
+            cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 50])
         elif thumbs_dir and best_frame is None:
             # No detection - save middle frame without annotation
             cap = cv2.VideoCapture(str(video_path))
@@ -206,8 +206,8 @@ class PoseClassifier:
             if ret:
                 thumbs_dir.mkdir(parents=True, exist_ok=True)
                 thumb_path = thumbs_dir / f"{video_path.stem}.jpg"
-                thumb = cv2.resize(frame, (320, 180))
-                cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                thumb = cv2.resize(frame, (160, 120))
+                cv2.imwrite(str(thumb_path), thumb, [cv2.IMWRITE_JPEG_QUALITY, 50])
 
         return classification, thumb_path
 
@@ -332,7 +332,7 @@ Watching for new chunks... (Ctrl+C to stop)
                 # Move to appropriate folder (check file still exists)
                 if not video_path.exists():
                     processed_files.add(video_path.name)  # Mark as done to prevent retries
-                    print(f"  Skipped (file no longer exists)")
+                    print("  Skipped (file no longer exists)")
                     continue
 
                 dest = output_dir / folder / video_path.name

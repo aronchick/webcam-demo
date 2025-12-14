@@ -325,9 +325,9 @@ async def dashboard():
         }
         .thumb-preview.empty { opacity: 0.3; }
         .thumb-preview img {
-            max-width: 140px;
-            max-height: 70px;
-            border-radius: 6px;
+            max-width: 80px;
+            max-height: 60px;
+            border-radius: 4px;
             object-fit: contain;
         }
         .thumb-label {
@@ -471,8 +471,8 @@ async def dashboard():
             to { opacity: 1; transform: translateX(0); }
         }
         .event-thumb {
-            width: 48px; height: 27px;
-            border-radius: 4px;
+            width: 40px; height: 30px;
+            border-radius: 3px;
             background: var(--bg-tertiary);
             overflow: hidden;
             flex-shrink: 0;
